@@ -1,0 +1,34 @@
+# Productos a seguir. Cada [[search]] es una búsqueda en el catálogo de MercadoLibre.
+# El pipeline se queda con los productos que tienen vendedores activos, hasta max_products.
+# Al cambiar este archivo, la próxima corrida vuelve a descubrir los productos.
+#
+# domain_id  filtra por tipo de producto (evita fundas y cargadores al buscar celulares).
+#            Para ver los dominios: python scripts/probe_items.py --query "..." --domain=
+# include    regex que el modelo o el nombre del producto tienen que cumplir.
+# exclude    regex que descarta productos (otras variantes del modelo, combos, etc.).
+#            Las regex no distinguen mayúsculas. Usar comillas simples para que \b funcione.
+
+[[search]]
+name = "iphone-15"
+query = "iphone 15"
+domain_id = "MLA-CELLPHONES"
+include = '\biphone 15\b'
+exclude = '\b(plus|pro|max)\b'
+max_products = 10
+
+# El atributo MODEL de Samsung no tiene formato fijo ("S24", "Galaxy S24", "S24 (eSIM)"...),
+# por eso se filtra con regex en vez de un valor exacto.
+[[search]]
+name = "samsung-galaxy-s24"
+query = "samsung galaxy s24"
+domain_id = "MLA-CELLPHONES"
+include = '\bs24\b'
+exclude = '\b(fe|ultra|plus|buds)\b|s24\s*\+'
+max_products = 10
+
+[[search]]
+name = "playstation-5"
+query = "consola playstation 5"
+domain_id = "MLA-GAME_CONSOLES"
+include = '\b(playstation 5|ps5)\b'
+max_products = 5
