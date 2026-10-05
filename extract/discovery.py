@@ -22,6 +22,7 @@ import tomllib
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 
 from extract.client import ApiError, ApiResponse, MeliClient
 
@@ -200,7 +201,15 @@ def watchlist_fingerprint(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
 
 
+class TrackedProductsStore(Protocol):
+    def needs_refresh(self, fingerprint: str, max_age: timedelta, now: datetime | None = None) -> bool: ...
+    def products(self) -> list[TrackedProduct]: ...
+    def save(self, products: list[TrackedProduct], fingerprint: str) -> None: ...
+
+
 class TrackedProductsRegistry:
+    """Lista de productos seguidos en un JSON local (modo sin base de datos)."""
+
     def __init__(self, path: Path):
         self.path = Path(path)
 
@@ -230,3 +239,41 @@ class TrackedProductsRegistry:
             "products": [asdict(p) for p in products],
         }
         self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+class PostgresTrackedProducts:
+    """Lista de productos seguidos en ops.tracked_products. Se reemplaza completa en cada descubrimiento."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def needs_refresh(self, fingerprint: str, max_age: timedelta, now: datetime | None = None) -> bool:
+        now = now or datetime.now(UTC)
+        count, refreshed_at, fingerprints = self.conn.execute(
+            "select count(*), min(refreshed_at), array_agg(distinct watchlist_fingerprint)"
+            " from ops.tracked_products"
+        ).fetchone()
+        if not count:
+            return True
+        if fingerprints != [fingerprint]:
+            return True
+        return now - refreshed_at > max_age
+
+    def products(self) -> list[TrackedProduct]:
+        rows = self.conn.execute(
+            "select product_id, name, domain_id, search from ops.tracked_products order by search, product_id"
+        ).fetchall()
+        return [TrackedProduct(*row) for row in rows]
+
+    def save(self, products: list[TrackedProduct], fingerprint: str) -> None:
+        now = datetime.now(UTC)
+        rows = [(p.product_id, p.name, p.domain_id, p.search, now, fingerprint) for p in products]
+        with self.conn.transaction():
+            self.conn.execute("delete from ops.tracked_products")
+            with self.conn.cursor() as cur:
+                cur.executemany(
+                    "insert into ops.tracked_products"
+                    " (product_id, name, domain_id, search, refreshed_at, watchlist_fingerprint)"
+                    " values (%s, %s, %s, %s, %s, %s)",
+                    rows,
+                )

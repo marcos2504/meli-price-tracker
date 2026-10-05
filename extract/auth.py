@@ -2,9 +2,10 @@
 Autenticación OAuth 2.0 contra MercadoLibre.
 
 - `Tokens`: access token, refresh token y vencimiento.
-- `TokenStore`: dónde se persisten los tokens. Hoy un archivo local; en la Fase 2, una tabla de Postgres.
+- `TokenStore`: dónde se persisten los tokens: un archivo local o la tabla ops.auth_tokens.
 - `TokenManager`: entrega un access token válido y lo renueva solo cuando está por vencer.
-  MercadoLibre rota el refresh token en cada uso, así que cada renovación se guarda de inmediato.
+  MercadoLibre rota el refresh token en cada uso, así que cada renovación se guarda de inmediato
+  y se hace bajo un lock: si dos corridas renuevan a la vez, una invalidaría el token de la otra.
 - `bootstrap`: flujo de autorización inicial (una sola vez), con PKCE opcional.
 """
 
@@ -15,7 +16,8 @@ import hashlib
 import json
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -75,6 +77,9 @@ class Tokens:
 class TokenStore(Protocol):
     def load(self) -> Tokens | None: ...
     def save(self, tokens: Tokens) -> None: ...
+    def lock(self) -> AbstractContextManager[None]:
+        """Exclusión mutua durante la renovación del token."""
+        ...
 
 
 class FileTokenStore:
@@ -96,6 +101,46 @@ class FileTokenStore:
         tmp.write_text(json.dumps(tokens.to_dict(), indent=2), encoding="utf-8")
         tmp.replace(self.path)  # escritura atómica: nunca queda un archivo a medio escribir
 
+    def lock(self) -> AbstractContextManager[None]:
+        return nullcontext()  # uso local: una sola corrida a la vez
+
+
+class PostgresTokenStore:
+    """Guarda los tokens en ops.auth_tokens (una sola fila)."""
+
+    def __init__(self, conn):
+        self.conn = conn
+
+    def load(self) -> Tokens | None:
+        row = self.conn.execute(
+            "select access_token, refresh_token, expires_at, user_id from ops.auth_tokens where id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return Tokens(access_token=row[0], refresh_token=row[1], expires_at=row[2], user_id=row[3])
+
+    def save(self, tokens: Tokens) -> None:
+        self.conn.execute(
+            """
+            insert into ops.auth_tokens (id, access_token, refresh_token, expires_at, user_id, updated_at)
+            values (1, %s, %s, %s, %s, now())
+            on conflict (id) do update set
+                access_token = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                expires_at = excluded.expires_at,
+                user_id = excluded.user_id,
+                updated_at = now()
+            """,
+            (tokens.access_token, tokens.refresh_token, tokens.expires_at, tokens.user_id),
+        )
+
+    @contextmanager
+    def lock(self) -> Iterator[None]:
+        # Advisory lock de transacción: otra corrida que quiera renovar espera hasta que esta termine
+        with self.conn.transaction():
+            self.conn.execute("select pg_advisory_xact_lock(hashtext('meli-price-tracker:oauth'))")
+            yield
+
 
 class TokenManager:
     def __init__(self, settings: Settings, store: TokenStore, session: requests.Session | None = None):
@@ -115,7 +160,21 @@ class TokenManager:
 
     def refresh(self) -> Tokens:
         """Canjea el refresh token por uno nuevo. Se llama solo o ante un 401 del cliente."""
-        current = self._tokens or self.store.load()
+        with self.store.lock():
+            latest = self.store.load()
+            if (
+                latest is not None
+                and self._tokens is not None
+                and latest.refresh_token != self._tokens.refresh_token
+                and not latest.is_expiring()
+            ):
+                # Otra corrida ya renovó mientras esperábamos el lock: usamos su token
+                log.info("Token renovado por otra corrida; lo reuso")
+                self._tokens = latest
+                return latest
+            return self._refresh_with(latest or self._tokens)
+
+    def _refresh_with(self, current: Tokens | None) -> Tokens:
         if current is None:
             raise AuthError("No hay refresh token. Corré: python -m extract bootstrap")
 
