@@ -17,7 +17,6 @@ Cómo conseguir los IDs desde la web de MercadoLibre:
 import argparse
 import json
 import os
-import sys
 
 import requests
 
@@ -73,7 +72,8 @@ def main() -> None:
         body = r.json()
         results = body.get("results", [])
         total = (body.get("paging") or {}).get("total")
-        print(f"         '{args.query}' (dominio {args.domain or 'sin filtro'}): {total} productos, {len(results)} en esta página")
+        dominio = args.domain or "sin filtro"
+        print(f"         '{args.query}' (dominio {dominio}): {total} productos, {len(results)} en la página")
         domains = sorted({p.get("domain_id") for p in results if p.get("domain_id")})
         print(f"         dominios en los resultados: {domains}")
         candidates = [p["id"] for p in results if p.get("id")]
@@ -120,7 +120,8 @@ def main() -> None:
             listings = body.get("results", []) if isinstance(body, dict) else []
             prices = sorted(x["price"] for x in listings if x.get("price") is not None)
             paging = body.get("paging") if isinstance(body, dict) else None
-            print(f"         {len(listings)} publicaciones; precios: {prices[:5]}{' ...' if len(prices) > 5 else ''}")
+            more = " ..." if len(prices) > 5 else ""
+            print(f"         {len(listings)} publicaciones; precios: {prices[:5]}{more}")
             if paging:
                 print(f"         paginación: {paging}")
             if listings and "sample" not in ok:
