@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <marker id="h" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="2.6" markerHeight="2.6" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#FF6B4A"/>
+    </marker>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0F3D4C"/>
+  <path d="M104 256 L184 148 H388 a24 24 0 0 1 24 24 V340 a24 24 0 0 1 -24 24 H184 Z" fill="#F4F7F8"/>
+  <circle cx="168" cy="256" r="18" fill="#0F3D4C"/>
+  <polyline points="214,196 268,240 306,214 364,290" fill="none" stroke="#FF6B4A" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#h)"/>
+  <line x1="214" y1="324" x2="380" y2="324" stroke="#9FB4BC" stroke-width="10" stroke-linecap="round"/>
+</svg>

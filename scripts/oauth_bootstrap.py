@@ -10,7 +10,7 @@ Uso:
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import requests
@@ -49,9 +49,7 @@ def main() -> None:
         raise SystemExit(f"Error {resp.status_code}: {resp.text}")
 
     tokens = resp.json()
-    tokens["expires_at"] = (
-        datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
-    ).isoformat()
+    tokens["expires_at"] = (datetime.now(UTC) + timedelta(seconds=tokens["expires_in"])).isoformat()
 
     with open(".tokens.json", "w") as f:
         json.dump(tokens, f, indent=2)

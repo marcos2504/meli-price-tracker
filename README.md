@@ -4,7 +4,7 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** Fase 0 completada (API validada, local y desde GitHub Actions) · Fase 1 en curso
+> **Estado:** Fase 0 completada · Fase 1 (extractor) implementada y testeada · Fase 2 próxima
 
 ---
 
@@ -87,7 +87,9 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | Decisión | Por qué |
 |---|---|
 | **Descubrimiento por catálogo** | Es el camino disponible para apps no certificadas, y el producto de catálogo es mejor unidad de análisis que la publicación suelta. |
-| **Watchlist en `watchlist.yml`** | Cada entrada es una búsqueda con su dominio y un máximo de productos. Agregar productos a seguir es una línea de configuración. |
+| **Watchlist en `watchlist.toml`** | Cada entrada es una búsqueda con su dominio y un máximo de productos. TOML se lee con la biblioteca estándar (`tomllib`), sin dependencias extra. |
+| **Filtro por regex sobre modelo y nombre** | La búsqueda del catálogo es aproximada y el atributo `MODEL` lo cargan los vendedores sin formato fijo (el mismo Galaxy S24 aparece como "S24", "Galaxy S24" o "S24 (eSIM)"). Un valor exacto pierde productos; las regex `include`/`exclude` de la watchlist los capturan y descartan variantes (FE, Ultra, Plus) antes de gastar llamadas en ellas. |
+| **Descubrimiento semanal** | La lista de productos se guarda y se refresca cada 7 días o cuando cambia la watchlist. Los precios ya consultados al validar productos se reusan, sin repetir llamadas. |
 | **ELT con capa bronze** | La respuesta JSON se guarda sin tocar. Si cambia la lógica, se reprocesa sin volver a consultar la API. |
 | **Cargas idempotentes** | Correr dos veces el mismo día no duplica datos (delete + insert por `snapshot_date`). |
 | **Refresh token persistido en la base** | MercadoLibre rota el refresh token en cada uso; un secret estático de GitHub no alcanza. |
@@ -129,12 +131,14 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 - [x] Endpoints validados: búsqueda general, más vendidos y detalle de publicaciones bloqueados; catálogo de productos disponible
 - [x] Smoke test exitoso localmente y desde GitHub Actions
 
-### Fase 1: Extractor (2–3 días)
-- [ ] `auth.py`: refresh y persistencia del token rotativo, con PKCE
-- [ ] `client.py`: reintentos con backoff exponencial (429 y 5xx), timeouts, paginación
-- [ ] `discovery.py`: productos a seguir a partir de `watchlist.yml`
-- [ ] `prices.py`: publicaciones y precios de cada producto
-- [ ] Tests unitarios con respuestas simuladas
+### Fase 1: Extractor ✅
+- [x] `auth.py`: renovación automática y persistencia atómica del token rotativo, bootstrap con PKCE opcional
+- [x] `client.py`: reintentos con backoff exponencial y jitter (429, 5xx, errores de red), `Retry-After`, renovación ante 401
+- [x] `discovery.py`: productos con vendedores activos a partir de `watchlist.toml`, con búsqueda paginada
+- [x] `prices.py`: publicaciones y precios de cada producto
+- [x] `LocalJsonlSink`: bronze en archivos JSON Lines particionados por fecha, mientras no hay base
+- [x] Filtro de productos por dominio y regex sobre modelo y nombre
+- [x] 34 tests unitarios con la API simulada, sin acceso a red
 
 ### Fase 2: Carga a bronze (1 día)
 - [ ] Neon PostgreSQL con schemas `bronze`, `silver`, `gold` y `ops`
@@ -168,14 +172,16 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 
 ```
 ├── extract/
+│   ├── config.py        # configuración desde el entorno
 │   ├── auth.py          # obtención y rotación de tokens
 │   ├── client.py        # cliente HTTP de la API
 │   ├── discovery.py     # productos a seguir según la watchlist
 │   ├── prices.py        # publicaciones y precios por producto
 │   ├── sinks/
 │   │   ├── base.py      # interfaz Sink
-│   │   └── postgres.py  # escribe en bronze
-│   └── main.py          # punto de entrada del pipeline
+│   │   ├── local.py     # bronze en JSON Lines (desarrollo)
+│   │   └── postgres.py  # bronze en Postgres (Fase 2)
+│   └── main.py          # punto de entrada: python -m extract
 ├── dbt/
 │   ├── models/staging/  # → silver
 │   ├── snapshots/       # → silver (SCD2)
@@ -184,10 +190,24 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 ├── tests/
 ├── scripts/             # utilidades de la Fase 0
 ├── docs/                # diagramas
-├── watchlist.yml
+├── watchlist.toml
 └── .github/workflows/
     ├── daily.yml
     └── ci.yml
+```
+
+## Cómo correrlo
+
+Requiere Python 3.11 o superior.
+
+```bash
+python -m venv .venv && source .venv/bin/activate   # en Windows: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+cp .env.example .env                                 # completar con los datos de la app del DevCenter
+
+python -m extract bootstrap          # autorización inicial, una sola vez
+python -m extract run                # descubrimiento (si toca) y precios del día
+python -m unittest discover -s tests -t .   # tests
 ```
 
 ## Stack
