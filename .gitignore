@@ -1,16 +1,19 @@
 # Credenciales: nunca al repo
 .env
 .tokens.json
-
+ 
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
-
+ 
 # dbt
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
-
+ 
 .DS_Store
+ 
+# Respuestas de prueba de la API
+samples/
