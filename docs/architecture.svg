@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 400" width="1140" height="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Arquitectura MeLi Price Tracker v1</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1 L9 5 L1 9" fill="none" stroke="#555b66" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1140" height="400" rx="16" fill="#ffffff"/>
+
+  <!-- Orquestación -->
+  <rect x="240" y="30" width="190" height="56" rx="8" fill="#eef1f6" stroke="#5b6475" stroke-width="1.2"/>
+  <text x="335" y="54" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2430">GitHub Actions</text>
+  <text x="335" y="73" text-anchor="middle" font-size="12" fill="#5b6475">cron diario + CI</text>
+  <line x1="335" y1="86" x2="335" y2="166" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <!-- Fuente -->
+  <rect x="30" y="170" width="170" height="70" rx="8" fill="#fff8db" stroke="#a88a12" stroke-width="1.2"/>
+  <text x="115" y="200" text-anchor="middle" font-size="15" font-weight="600" fill="#4a3d05">API</text>
+  <text x="115" y="220" text-anchor="middle" font-size="15" font-weight="600" fill="#4a3d05">MercadoLibre</text>
+  <line x1="200" y1="205" x2="236" y2="205" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <!-- Extractor -->
+  <rect x="240" y="170" width="190" height="70" rx="8" fill="#eef1f6" stroke="#5b6475" stroke-width="1.2"/>
+  <text x="335" y="198" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2430">Extractor Python</text>
+  <text x="335" y="219" text-anchor="middle" font-size="12" fill="#5b6475">OAuth · reintentos · sinks</text>
+
+  <!-- Contenedor Postgres -->
+  <rect x="465" y="40" width="480" height="330" rx="14" fill="none" stroke="#8a919e" stroke-width="1.2" stroke-dasharray="6 5"/>
+  <text x="485" y="68" font-size="14" font-weight="600" fill="#3a404c">PostgreSQL (Neon)</text>
+  <text x="485" y="87" font-size="12" fill="#6b7280">transformaciones con dbt</text>
+
+  <line x1="430" y1="205" x2="486" y2="205" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <!-- Bronze -->
+  <rect x="490" y="150" width="130" height="100" rx="8" fill="#f6e6d6" stroke="#a5622a" stroke-width="1.2"/>
+  <text x="555" y="178" text-anchor="middle" font-size="15" font-weight="600" fill="#5a3214">Bronze</text>
+  <text x="555" y="200" text-anchor="middle" font-size="12" fill="#7a4a24">JSON crudo</text>
+  <text x="555" y="226" text-anchor="middle" font-size="11" fill="#7a4a24" font-family="ui-monospace, Menlo, Consolas, monospace">api_responses</text>
+  <line x1="620" y1="200" x2="636" y2="200" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <!-- Silver -->
+  <rect x="640" y="150" width="130" height="100" rx="8" fill="#eceef1" stroke="#6f7682" stroke-width="1.2"/>
+  <text x="705" y="178" text-anchor="middle" font-size="15" font-weight="600" fill="#2c313a">Silver</text>
+  <text x="705" y="200" text-anchor="middle" font-size="12" fill="#4b525d">limpio + SCD2</text>
+  <text x="705" y="226" text-anchor="middle" font-size="11" fill="#4b525d" font-family="ui-monospace, Menlo, Consolas, monospace">snap_item_prices</text>
+  <line x1="770" y1="200" x2="786" y2="200" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <!-- Gold -->
+  <rect x="790" y="150" width="135" height="100" rx="8" fill="#fbf0c6" stroke="#ad8a08" stroke-width="1.2"/>
+  <text x="857" y="178" text-anchor="middle" font-size="15" font-weight="600" fill="#4f3e02">Gold</text>
+  <text x="857" y="200" text-anchor="middle" font-size="12" fill="#6d5604">modelo estrella</text>
+  <text x="857" y="226" text-anchor="middle" font-size="11" fill="#6d5604" font-family="ui-monospace, Menlo, Consolas, monospace">fct_daily_price</text>
+
+  <!-- Ops -->
+  <rect x="490" y="290" width="130" height="58" rx="8" fill="#f7f7f8" stroke="#8a919e" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="555" y="314" text-anchor="middle" font-size="14" font-weight="600" fill="#3a404c">ops</text>
+  <text x="555" y="333" text-anchor="middle" font-size="12" fill="#6b7280">tokens · corridas</text>
+  <path d="M335 244 L335 319 L486 319" fill="none" stroke="#555b66" stroke-width="1.4" marker-start="url(#a)" marker-end="url(#a)"/>
+
+  <!-- Dashboard -->
+  <line x1="925" y1="200" x2="971" y2="200" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
+  <rect x="975" y="170" width="140" height="70" rx="8" fill="#e6f4ee" stroke="#2f7d5b" stroke-width="1.2"/>
+  <text x="1045" y="198" text-anchor="middle" font-size="15" font-weight="600" fill="#123d2b">Dashboard</text>
+  <text x="1045" y="219" text-anchor="middle" font-size="12" fill="#2f6b50">Streamlit Cloud</text>
+</svg>
