@@ -1,18 +1,19 @@
 # MeLi Price Tracker
 
-Pipeline de datos que consulta diariamente la API de MercadoLibre para varias categorías, guarda el **historial completo de precios (SCD tipo 2)** y muestra qué productos bajaron o subieron de precio.
+Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, guarda el **historial completo de precios (SCD tipo 2)** y muestra qué productos bajaron o subieron, cuántos vendedores compiten por cada uno y cuándo un precio está por debajo de lo habitual.
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** en construcción · Fase 0 (validación de la API)
+> **Estado:** Fase 0 completada (API validada, local y desde GitHub Actions) · Fase 1 en curso
 
 ---
 
 ## Resultado
 
-- **Historial diario de precios** de los productos más relevantes de N categorías configurables
-- **Historial de cambios (SCD2)**: cada cambio de precio o estado queda registrado con su vigencia
-- **Mayores bajas y subas de la semana** por categoría
+- **Historial diario de precios** de cada vendedor para los productos de una watchlist configurable
+- **Historial de cambios (SCD2)**: cada cambio de precio, descuento o condición de envío queda registrado con su vigencia
+- **Competencia por producto**: precio mínimo, mediana y cantidad de vendedores por día
+- **Mayores bajas y subas de la semana**
 - **Dashboard público** con ranking de movimientos, evolución de precio por producto y salud del pipeline
 - **Ejecución diaria automática** con GitHub Actions, idempotente y con costo $0
 
@@ -27,13 +28,25 @@ Cubre el caso más común en data engineering: **ingesta robusta de una API exte
 3. **dbt** transforma los datos en tres capas dentro de PostgreSQL.
 4. El **dashboard** lee la capa gold.
 
+### Cómo se obtienen los datos
+
+Desde 2025, MercadoLibre restringe varios endpoints a aplicaciones certificadas: la búsqueda general de publicaciones, los más vendidos y el detalle de publicaciones de terceros devuelven 403. La Fase 0 validó un camino que sí está disponible, basado en el **catálogo de productos**:
+
+| Paso | Endpoint | Frecuencia |
+|---|---|---|
+| Descubrimiento | `/products/search` filtrado por búsqueda y dominio | Semanal |
+| Precios | `/products/{id}/items`: todos los vendedores de un producto (hasta 100 por llamada) | Diaria |
+| Atributos | `/products/{id}`: nombre y características del producto | Al descubrirlo |
+
+El producto de catálogo es una entidad estable (por ejemplo, "iPhone 15 128 GB Negro"), y sus publicaciones son los vendedores que compiten por él. Eso permite analizar precios por producto y no por publicación individual.
+
 ### Capas (arquitectura medallion)
 
 | Capa | Contenido | Tablas principales |
 |---|---|---|
 | **Bronze** | Respuestas de la API tal cual llegan, en `jsonb` | `api_responses` |
-| **Silver** | Datos tipados y deduplicados, con historial SCD2 | `stg_item_prices`, `snap_item_prices` |
-| **Gold** | Modelo estrella listo para consumir | `dim_item`, `dim_category`, `fct_daily_price`, `mart_weekly_movers` |
+| **Silver** | Datos tipados y deduplicados, con historial SCD2 | `stg_products`, `stg_listing_prices`, `snap_listing_prices` |
+| **Gold** | Modelo estrella listo para consumir | `dim_product`, `dim_seller`, `fct_listing_daily`, `fct_product_daily`, `mart_weekly_movers` |
 
 El schema `ops` queda fuera de las capas: guarda el estado operativo del pipeline (tokens y registro de corridas), no datos de negocio.
 
@@ -58,13 +71,14 @@ class PostgresSink:   # escribe en bronze.api_responses
 Cambiar el destino (por ejemplo, a un data lake) es agregar un sink nuevo y cambiar una línea de configuración, sin tocar el cliente de la API ni la lógica de extracción.
 
 ### 3. Modelo estrella en gold (modelado)
-Gold sigue un modelo dimensional estilo Kimball:
+Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de distinto grano:
 
-- **`dim_item`**: publicación, título, vendedor, condición (se construye desde el SCD2 de silver)
-- **`dim_category`**: categoría y su jerarquía
-- **`fct_daily_price`**: un registro por ítem y día, con precio y variación respecto del día anterior
+- **`dim_product`**: producto de catálogo, nombre, dominio y atributos
+- **`dim_seller`**: vendedor, provincia, si es tienda oficial
+- **`fct_listing_daily`**: publicación × día, con precio, precio original, envío y condición
+- **`fct_product_daily`**: producto × día, con precio mínimo, mediana, cantidad de vendedores y brecha entre el más barato y el segundo
 
-`mart_weekly_movers` se arma encima del modelo estrella con una consulta simple.
+`mart_weekly_movers` se arma encima de `fct_product_daily`.
 
 ---
 
@@ -72,15 +86,18 @@ Gold sigue un modelo dimensional estilo Kimball:
 
 | Decisión | Por qué |
 |---|---|
+| **Descubrimiento por catálogo** | Es el camino disponible para apps no certificadas, y el producto de catálogo es mejor unidad de análisis que la publicación suelta. |
+| **Watchlist en `watchlist.yml`** | Cada entrada es una búsqueda con su dominio y un máximo de productos. Agregar productos a seguir es una línea de configuración. |
 | **ELT con capa bronze** | La respuesta JSON se guarda sin tocar. Si cambia la lógica, se reprocesa sin volver a consultar la API. |
 | **Cargas idempotentes** | Correr dos veces el mismo día no duplica datos (delete + insert por `snapshot_date`). |
 | **Refresh token persistido en la base** | MercadoLibre rota el refresh token en cada uso; un secret estático de GitHub no alcanza. |
-| **Categorías en `categories.yml`** | Agregar una categoría es una línea de configuración, no un cambio de código. |
-| **Multiget `/items?ids=`** | Hasta 20 ítems por request: menos llamadas y menos riesgo de superar los límites de consultas. |
-| **dbt snapshot para SCD2** | Estrategia `check` sobre precio y estado; estándar de industria y testeable. |
-| **Registro de corridas en `ops.pipeline_runs`** | Cada ejecución guarda duración, ítems, errores y respuestas 429. Observabilidad desde el día uno. |
+| **Permisos mínimos** | La app solo tiene acceso de lectura: un token filtrado no permite modificar nada en la cuenta. |
+| **dbt snapshot para SCD2** | Estrategia `check` sobre precio, precio original, envío y tipo de publicación. |
+| **Registro de corridas en `ops.pipeline_runs`** | Cada ejecución guarda duración, productos procesados, errores y respuestas 429. |
 
 > **Sobre la escala:** el volumen es de miles de filas por día, así que PostgreSQL alcanza de sobra. El diseño por capas y los sinks intercambiables permiten migrar a un lakehouse si el volumen creciera (ver [Roadmap](#roadmap)).
+
+> **Sobre la inflación:** los precios están en pesos argentinos, donde una suba puede reflejar solo inflación. El roadmap incluye una dimensión de cotización del dólar para mostrar también variaciones en USD.
 
 ---
 
@@ -88,13 +105,15 @@ Gold sigue un modelo dimensional estilo Kimball:
 
 | Schema | Tabla | Grano | Descripción |
 |---|---|---|---|
-| `bronze` | `api_responses` | request | JSON crudo + `run_id`, `category_id`, `fetched_at` |
-| `silver` | `stg_item_prices` | ítem × día | Precio, precio original, moneda, estado, vendedor |
-| `silver` | `snap_item_prices` | ítem × versión | SCD2 con `dbt_valid_from` / `dbt_valid_to` |
-| `gold` | `dim_item` | ítem | Atributos descriptivos de la publicación |
-| `gold` | `dim_category` | categoría | Nombre y jerarquía |
-| `gold` | `fct_daily_price` | ítem × día | Precio, precio anterior, variación % |
-| `gold` | `mart_weekly_movers` | ítem × semana | Mayores bajas y subas por categoría |
+| `bronze` | `api_responses` | request | JSON crudo + `run_id`, `endpoint`, `product_id`, `fetched_at` |
+| `silver` | `stg_products` | producto | Nombre, dominio y atributos del catálogo |
+| `silver` | `stg_listing_prices` | publicación × día | Precio, precio original, condición, tipo de publicación, envío, vendedor |
+| `silver` | `snap_listing_prices` | publicación × versión | SCD2 con `dbt_valid_from` / `dbt_valid_to` |
+| `gold` | `dim_product` | producto | Atributos descriptivos |
+| `gold` | `dim_seller` | vendedor | Provincia, tienda oficial |
+| `gold` | `fct_listing_daily` | publicación × día | Precio y condiciones de venta |
+| `gold` | `fct_product_daily` | producto × día | Precio mínimo, mediana, vendedores, brecha de precios |
+| `gold` | `mart_weekly_movers` | producto × semana | Mayores bajas y subas |
 | `ops` | `auth_tokens` | 1 fila | Access y refresh token vigentes |
 | `ops` | `pipeline_runs` | corrida | Métricas y estado de cada ejecución |
 
@@ -104,17 +123,17 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 
 ## Plan de acción
 
-### Fase 0: Validar la API (½ día)
-- [ ] Crear la app en el DevCenter de MercadoLibre y completar el flujo OAuth
-- [ ] Smoke test local de los endpoints (`scripts/smoke_test.py`)
-- [ ] Mismo smoke test desde GitHub Actions para confirmar que la IP del runner no está bloqueada
-- [ ] Elegir el endpoint para descubrir ítems por categoría (búsqueda o más vendidos)
+### Fase 0: Validar la API ✅
+- [x] App registrada en el DevCenter de MercadoLibre, con permisos de solo lectura
+- [x] Flujo OAuth completo con refresh token
+- [x] Endpoints validados: búsqueda general, más vendidos y detalle de publicaciones bloqueados; catálogo de productos disponible
+- [x] Smoke test exitoso localmente y desde GitHub Actions
 
 ### Fase 1: Extractor (2–3 días)
-- [ ] `auth.py`: refresh y persistencia del token rotativo
+- [ ] `auth.py`: refresh y persistencia del token rotativo, con PKCE
 - [ ] `client.py`: reintentos con backoff exponencial (429 y 5xx), timeouts, paginación
-- [ ] `discovery.py`: ítems a seguir por categoría, leídos de `categories.yml`
-- [ ] Multiget en lotes de 20 ítems
+- [ ] `discovery.py`: productos a seguir a partir de `watchlist.yml`
+- [ ] `prices.py`: publicaciones y precios de cada producto
 - [ ] Tests unitarios con respuestas simuladas
 
 ### Fase 2: Carga a bronze (1 día)
@@ -123,8 +142,8 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 - [ ] Registro de cada corrida en `ops.pipeline_runs`
 
 ### Fase 3: Transformación con dbt (2–3 días)
-- [ ] Silver: `stg_item_prices` (idempotente) y `snap_item_prices` (SCD2)
-- [ ] Gold: `dim_item`, `dim_category`, `fct_daily_price`, `mart_weekly_movers`
+- [ ] Silver: `stg_products`, `stg_listing_prices` (idempotente) y `snap_listing_prices` (SCD2)
+- [ ] Gold: dimensiones, `fct_listing_daily`, `fct_product_daily`, `mart_weekly_movers`
 - [ ] Tests dbt: `unique`, `not_null`, relaciones, rangos de precio, frescura
 
 ### Fase 4: Orquestación (1 día)
@@ -133,8 +152,8 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 - [ ] Alerta si la corrida diaria falla
 
 ### Fase 5: Dashboard (1–2 días)
-- [ ] Ranking de bajas y subas con filtro por categoría
-- [ ] Evolución de precio por ítem
+- [ ] Ranking de bajas y subas
+- [ ] Evolución de precio y competencia por producto
 - [ ] Panel de salud del pipeline (desde `ops.pipeline_runs`)
 - [ ] Deploy en Streamlit Community Cloud
 
@@ -151,7 +170,8 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 ├── extract/
 │   ├── auth.py          # obtención y rotación de tokens
 │   ├── client.py        # cliente HTTP de la API
-│   ├── discovery.py     # qué ítems seguir por categoría
+│   ├── discovery.py     # productos a seguir según la watchlist
+│   ├── prices.py        # publicaciones y precios por producto
 │   ├── sinks/
 │   │   ├── base.py      # interfaz Sink
 │   │   └── postgres.py  # escribe en bronze
@@ -164,7 +184,7 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 ├── tests/
 ├── scripts/             # utilidades de la Fase 0
 ├── docs/                # diagramas
-├── categories.yml
+├── watchlist.yml
 └── .github/workflows/
     ├── daily.yml
     └── ci.yml
@@ -178,12 +198,9 @@ Python · requests · PostgreSQL (Neon) · dbt-core · Streamlit · GitHub Actio
 
 ## Roadmap
 
-**Migración a lakehouse (Databricks).** Una vez terminada la versión actual, el plan es migrarla a Databricks Free Edition para comparar ambos enfoques:
-
-- Un nuevo sink escribe el JSON en un Volume de Unity Catalog; el extractor no cambia
-- Las mismas tres capas pasan a tablas Delta: bronze con Auto Loader, silver con AUTO CDC (SCD2), gold con el mismo modelo estrella
-- Comparativa final: complejidad, costo y cuándo conviene cada versión
+- **Variaciones en USD:** dimensión diaria de cotización del dólar para separar cambios reales de precio de la inflación.
+- **Migración a lakehouse (Databricks):** un nuevo sink escribe el JSON en un Volume de Unity Catalog sin cambiar el extractor; las mismas capas pasan a tablas Delta (Auto Loader en bronze, AUTO CDC en silver). Cierra con una comparativa de complejidad, costo y cuándo conviene cada versión.
 
 ## Nota sobre la API
 
-Desde 2025 los endpoints de MercadoLibre requieren un access token OAuth asociado a un usuario. Este proyecto usa una aplicación registrada en el DevCenter y respeta los límites de consultas de la API.
+Este proyecto usa una aplicación registrada en el DevCenter de MercadoLibre, con permisos de solo lectura, y respeta los límites de consultas de la API.

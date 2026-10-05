@@ -3,17 +3,20 @@ name: Smoke test API MercadoLibre
 on:
   workflow_dispatch:
     inputs:
-      category:
-        description: "ID de categoría"
-        default: "MLA1055"
+      query:
+        description: "Búsqueda en catálogo"
+        default: "iphone 15"
+      product:
+        description: "ID de producto de catálogo con vendedores"
+        default: "MLA1027172677"
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -25,5 +28,6 @@ jobs:
       - name: Correr smoke test
         env:
           ML_ACCESS_TOKEN: ${{ secrets.ML_ACCESS_TOKEN }}
-          ML_CATEGORY: ${{ inputs.category }}
+          ML_QUERY: ${{ inputs.query }}
+          ML_PRODUCT: ${{ inputs.product }}
         run: python scripts/smoke_test.py
