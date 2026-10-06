@@ -1,2 +1,5 @@
 requests>=2.32
 python-dotenv>=1.0
+psycopg[binary]>=3.2
+# Base de zonas horarias: Windows no la trae y zoneinfo la necesita
+tzdata>=2024.1

@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 
 load_dotenv(ROOT / ".env")
+
+# Las fechas de snapshot se cuentan en hora de Argentina: una corrida a las 22 h es de ese día,
+# aunque en UTC ya sea el siguiente.
+TIMEZONE = ZoneInfo("America/Argentina/Buenos_Aires")
+
+
+def snapshot_date(moment: datetime | None = None) -> date:
+    return (moment or datetime.now(TIMEZONE)).astimezone(TIMEZONE).date()
 
 
 @dataclass(frozen=True)
@@ -25,6 +35,7 @@ class Settings:
     data_dir: Path = ROOT / "data"
     watchlist_path: Path = ROOT / "watchlist.toml"
     discovery_max_age_days: int = 7
+    database_url: str | None = None  # si está definida, el pipeline usa Postgres en vez de archivos
 
 
 def load_settings() -> Settings:
@@ -39,4 +50,5 @@ def load_settings() -> Settings:
         site_id=os.environ.get("ML_SITE_ID", "MLA"),
         data_dir=Path(os.environ.get("ML_DATA_DIR", ROOT / "data")),
         discovery_max_age_days=int(os.environ.get("ML_DISCOVERY_MAX_AGE_DAYS", "7")),
+        database_url=os.environ.get("DATABASE_URL") or None,
     )

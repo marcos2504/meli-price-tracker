@@ -1,6 +1,6 @@
 # Credenciales: nunca al repo
 .env
-.tokens.json
+.tokens.json*
 
 # Python
 __pycache__/

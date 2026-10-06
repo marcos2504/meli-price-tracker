@@ -4,7 +4,7 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** Fase 0 completada · Fase 1 (extractor) implementada y testeada · Fase 2 próxima
+> **Estado:** Fases 0 a 2 completadas: el extractor carga bronze en PostgreSQL (Neon) · Fase 3 (dbt) próxima
 
 ---
 
@@ -95,7 +95,11 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | **Refresh token persistido en la base** | MercadoLibre rota el refresh token en cada uso; un secret estático de GitHub no alcanza. |
 | **Permisos mínimos** | La app solo tiene acceso de lectura: un token filtrado no permite modificar nada en la cuenta. |
 | **dbt snapshot para SCD2** | Estrategia `check` sobre precio, precio original, envío y tipo de publicación. |
-| **Registro de corridas en `ops.pipeline_runs`** | Cada ejecución guarda duración, productos procesados, errores y respuestas 429. |
+| **Registro de corridas en `ops.pipeline_runs`** | La fila se inserta al empezar (`running`) y se actualiza al terminar: una corrida que se cae a la mitad también queda visible. Guarda duración, productos, errores y respuestas 429. |
+| **Renovación del token bajo lock** | El refresh se hace con un advisory lock de Postgres. Si dos corridas renuevan a la vez, la segunda espera y reusa el token nuevo en lugar de invalidarlo. |
+| **Bronze solo agrega filas** | Nunca se modifica ni se borra: si el pipeline corre dos veces el mismo día, silver se queda con la última corrida de cada día. |
+| **Fecha de snapshot en hora de Argentina** | Una corrida a las 22 h cuenta para ese día, aunque en UTC ya sea el siguiente. |
+| **Migraciones versionadas** | Archivos SQL numerados en `db/migrations/`, aplicados una sola vez y registrados en `ops.schema_migrations`. |
 
 > **Sobre la escala:** el volumen es de miles de filas por día, así que PostgreSQL alcanza de sobra. El diseño por capas y los sinks intercambiables permiten migrar a un lakehouse si el volumen creciera (ver [Roadmap](#roadmap)).
 
@@ -117,6 +121,7 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | `gold` | `fct_product_daily` | producto × día | Precio mínimo, mediana, vendedores, brecha de precios |
 | `gold` | `mart_weekly_movers` | producto × semana | Mayores bajas y subas |
 | `ops` | `auth_tokens` | 1 fila | Access y refresh token vigentes |
+| `ops` | `tracked_products` | producto | Productos seguidos, resultado del último descubrimiento |
 | `ops` | `pipeline_runs` | corrida | Métricas y estado de cada ejecución |
 
 En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `models/marts`) y cada carpeta escribe en su schema desde `dbt_project.yml`.
@@ -140,10 +145,12 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 - [x] Filtro de productos por dominio y regex sobre modelo y nombre
 - [x] 34 tests unitarios con la API simulada, sin acceso a red
 
-### Fase 2: Carga a bronze (1 día)
-- [ ] Neon PostgreSQL con schemas `bronze`, `silver`, `gold` y `ops`
-- [ ] `PostgresSink`: insert de respuestas JSON con `run_id`
-- [ ] Registro de cada corrida en `ops.pipeline_runs`
+### Fase 2: Carga a bronze ✅
+- [x] Neon PostgreSQL (São Paulo) con schemas `bronze`, `silver`, `gold` y `ops`, mediante migraciones versionadas
+- [x] `PostgresSink`: cada lote se inserta en una sola transacción
+- [x] Tokens, productos seguidos y registro de corridas en `ops`, para que el pipeline no dependa de archivos locales
+- [x] Renovación del token protegida contra corridas simultáneas
+- [x] Tests unitarios de los stores y tests de integración contra Postgres (opcionales, con `TEST_DATABASE_URL`)
 
 ### Fase 3: Transformación con dbt (2–3 días)
 - [ ] Silver: `stg_products`, `stg_listing_prices` (idempotente) y `snap_listing_prices` (SCD2)
@@ -177,11 +184,14 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 │   ├── client.py        # cliente HTTP de la API
 │   ├── discovery.py     # productos a seguir según la watchlist
 │   ├── prices.py        # publicaciones y precios por producto
+│   ├── db.py            # conexión y migraciones
+│   ├── runlog.py        # registro de corridas
 │   ├── sinks/
 │   │   ├── base.py      # interfaz Sink
 │   │   ├── local.py     # bronze en JSON Lines (desarrollo)
-│   │   └── postgres.py  # bronze en Postgres (Fase 2)
+│   │   └── postgres.py  # bronze en Postgres
 │   └── main.py          # punto de entrada: python -m extract
+├── db/migrations/       # SQL versionado
 ├── dbt/
 │   ├── models/staging/  # → silver
 │   ├── snapshots/       # → silver (SCD2)
@@ -203,12 +213,15 @@ Requiere Python 3.11 o superior.
 ```bash
 python -m venv .venv && source .venv/bin/activate   # en Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env                                 # completar con los datos de la app del DevCenter
+cp .env.example .env                                 # completar con la app del DevCenter y DATABASE_URL
 
+python -m extract db-init            # crea las tablas en Postgres (si hay un token local, lo importa)
 python -m extract bootstrap          # autorización inicial, una sola vez
 python -m extract run                # descubrimiento (si toca) y precios del día
 python -m unittest discover -s tests -t .   # tests
 ```
+
+Sin `DATABASE_URL`, el pipeline guarda todo en archivos dentro de `data/`: sirve para probar sin base.
 
 ## Stack
 

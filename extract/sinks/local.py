@@ -10,9 +10,10 @@ con la misma interfaz, y el resto del extractor no cambia.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from extract.config import snapshot_date
 
 
 class LocalJsonlSink:
@@ -22,7 +23,7 @@ class LocalJsonlSink:
     def write_batch(self, records: list[dict[str, Any]], run_id: str) -> None:
         if not records:
             return
-        day = datetime.now(UTC).date().isoformat()
+        day = snapshot_date().isoformat()
         folder = self.base_dir / f"snapshot_date={day}"
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / f"{run_id}.jsonl").open("a", encoding="utf-8") as f:
