@@ -1,0 +1,63 @@
+name: Pipeline diario
+
+on:
+  schedule:
+    # GitHub usa UTC: 13:17 UTC = 10:17 en Argentina. Minuto "raro" para no caer en el pico de las :00
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+    inputs:
+      force_discovery:
+        description: "Volver a descubrir los productos de la watchlist"
+        type: boolean
+        default: false
+
+# Nunca dos corridas a la vez: la segunda espera a que termine la primera
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # para abrir un issue si la corrida falla
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
+      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
+      ML_REDIRECT_URI: https://www.google.com
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Extracción (API → bronze)
+        run: python -m extract run ${{ inputs.force_discovery && '--force-discovery' || '' }}
+
+      - name: Transformación (bronze → silver → gold) y tests de datos
+        run: python -m transform build
+
+      - name: Abrir o actualizar un issue si algo falló
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Falló el pipeline diario"
+          body="La corrida del $(date -u +%F) falló. Detalle: $RUN_URL"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

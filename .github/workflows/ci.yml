@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Postgres descartable solo para esta corrida: nunca toca la base real
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Credenciales de mentira: los tests nunca llaman a la API real
+      ML_CLIENT_ID: ci
+      ML_CLIENT_SECRET: ci
+      ML_REDIRECT_URI: https://www.google.com
+      CI_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt ruff
+
+      - name: Lint (ruff)
+        run: |
+          ruff check extract transform tests scripts
+          ruff format --check extract transform tests scripts
+
+      - name: Tests unitarios y de integración con Postgres
+        env:
+          TEST_DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Cargar el escenario de prueba en bronze
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: python scripts/seed_ci.py
+
+      - name: dbt build (modelos + tests de datos)
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: python -m transform build
+
+      - name: Verificar los resultados esperados
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: python scripts/check_ci.py
