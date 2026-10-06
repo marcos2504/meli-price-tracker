@@ -4,7 +4,7 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** Fases 0 a 3 completadas: extracción a bronze en PostgreSQL (Neon) y modelos silver/gold con dbt · Fase 4 (orquestación) próxima
+> **Estado:** Fases 0 a 4 completadas: el pipeline corre solo todos los días en GitHub Actions · Fase 5 (dashboard) próxima
 
 ---
 
@@ -100,6 +100,7 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | **Renovación del token bajo lock** | El refresh se hace con un advisory lock de Postgres. Si dos corridas renuevan a la vez, la segunda espera y reusa el token nuevo en lugar de invalidarlo. |
 | **Bronze solo agrega filas** | Nunca se modifica ni se borra: si el pipeline corre dos veces el mismo día, silver se queda con la última corrida de cada día. |
 | **Fecha de snapshot en hora de Argentina** | Una corrida a las 22 h cuenta para ese día, aunque en UTC ya sea el siguiente. |
+| **CI con resultados esperados, no solo tests de reglas** | Los tests de dbt validan reglas generales (unicidad, nulos, relaciones). El CI además carga un escenario conocido y verifica números concretos del SCD2 y las métricas: si un cambio en el SQL altera los resultados, el PR falla. |
 | **Migraciones versionadas** | Archivos SQL numerados en `db/migrations/`, aplicados una sola vez y registrados en `ops.schema_migrations`. |
 
 > **Sobre la escala:** el volumen es de miles de filas por día, así que PostgreSQL alcanza de sobra. El diseño por capas y los sinks intercambiables permiten migrar a un lakehouse si el volumen creciera (ver [Roadmap](#roadmap)).
@@ -160,10 +161,11 @@ En dbt se mantiene la convención de carpetas (`models/staging` → `silver`, `m
 - [x] Tests singulares del SCD2: sin versiones superpuestas, una sola versión vigente, cada precio diario cubierto por una versión
 - [x] `python -m transform`: corre dbt con la misma `DATABASE_URL` que el extractor
 
-### Fase 4: Orquestación (1 día)
-- [ ] `daily.yml`: extracción + `dbt build` con cron diario
-- [ ] `ci.yml`: lint (ruff), tests de Python y `dbt build` contra una base de prueba en cada PR
-- [ ] Alerta si la corrida diaria falla
+### Fase 4: Orquestación ✅
+- [x] `daily.yml`: extracción + `dbt build` todos los días a las 10:17 (hora de Argentina), sin corridas superpuestas
+- [x] `ci.yml`: en cada PR, lint (ruff), tests de Python, tests de integración y `dbt build` contra un Postgres descartable
+- [x] Escenario de prueba en el CI con resultados esperados: cambio de precio, publicación que desaparece, producto sin vendedores y dos corridas el mismo día
+- [x] Si la corrida diaria falla, se abre (o se actualiza) un issue en el repo con el link a la ejecución
 
 ### Fase 5: Dashboard (1–2 días)
 - [ ] Ranking de bajas y subas
@@ -203,12 +205,12 @@ En dbt se mantiene la convención de carpetas (`models/staging` → `silver`, `m
 │   └── tests/           # tests singulares del SCD2
 ├── app/                 # dashboard Streamlit
 ├── tests/
-├── scripts/             # utilidades de la Fase 0
+├── scripts/             # utilidades de la Fase 0 y escenario de prueba del CI
 ├── docs/                # diagramas
 ├── watchlist.toml
 └── .github/workflows/
-    ├── daily.yml
-    └── ci.yml
+    ├── daily.yml        # pipeline diario
+    └── ci.yml           # lint, tests y dbt en cada PR
 ```
 
 ## Cómo correrlo
@@ -228,6 +230,20 @@ python -m unittest discover -s tests -t .   # tests
 ```
 
 Sin `DATABASE_URL`, el pipeline guarda todo en archivos dentro de `data/`: sirve para probar sin base.
+
+### Automatización en GitHub Actions
+
+El workflow `daily.yml` necesita estos secrets en **Settings → Secrets and variables → Actions**:
+
+| Secret | Valor |
+|---|---|
+| `ML_CLIENT_ID` | App ID de la aplicación del DevCenter |
+| `ML_CLIENT_SECRET` | Clave secreta de la aplicación |
+| `DATABASE_URL` | Connection string de Neon |
+
+Los tokens de MercadoLibre no van como secret: viven en `ops.auth_tokens` y el pipeline los renueva solo. Para correrlo a mano: pestaña **Actions → Pipeline diario → Run workflow**.
+
+> GitHub desactiva los workflows programados de un repo sin actividad durante 60 días. Si eso pasa, se reactivan desde la pestaña Actions.
 
 ## Stack
 
