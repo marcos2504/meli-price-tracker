@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: dim_product
+    description: Producto de catálogo con sus atributos y la búsqueda de la watchlist que lo trajo.
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+
+  - name: dim_seller
+    description: Vendedor, con su ubicación más reciente y si es tienda oficial.
+    columns:
+      - name: seller_id
+        data_tests: [unique, not_null]
+
+  - name: fct_listing_daily
+    description: Una fila por publicación y día, con precio, descuento y condiciones de venta.
+    columns:
+      - name: listing_day_id
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: seller_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_seller')
+                field: seller_id
+      - name: discount_pct
+        description: Descuento sobre el precio original, si la publicación informa uno.
+
+  - name: fct_product_daily
+    description: >
+      Una fila por producto y día: cantidad de vendedores, precio mínimo, mediana y máximo,
+      brecha entre el más barato y el segundo, y variación del mínimo respecto del día anterior.
+    columns:
+      - name: product_day_id
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: min_price
+        data_tests: [not_null, positive_value]
+      - name: sellers
+        data_tests: [not_null, positive_value]
+
+  - name: mart_weekly_movers
+    description: >
+      Variación del precio mínimo de cada producto en la última semana. drop_rank = 1 es la
+      mayor baja. Si todavía no hay 7 días de historia, days_compared indica contra qué día se comparó.
+    columns:
+      - name: product_id
+        data_tests: [unique, not_null]
+      - name: change_pct
+        data_tests: [not_null]

@@ -1,0 +1,24 @@
+name: meli_price_tracker
+version: "1.0.0"
+profile: meli
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  meli_price_tracker:
+    # Silver: datos tipados y deduplicados, más el historial SCD2
+    staging:
+      +schema: silver
+      +materialized: table
+    # Gold: modelo estrella listo para consumir
+    marts:
+      +schema: gold
+      +materialized: table
+
+data_tests:
+  meli_price_tracker:
+    +severity: error
