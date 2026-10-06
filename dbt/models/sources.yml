@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Respuestas de la API de MercadoLibre tal cual llegaron, cargadas por el extractor.
+    schema: bronze
+    tables:
+      - name: api_responses
+        description: Una fila por request. Solo se agregan filas.
+        loaded_at_field: loaded_at
+        freshness:
+          warn_after: { count: 26, period: hour }
+          error_after: { count: 50, period: hour }
+        columns:
+          - name: id
+            data_tests: [unique, not_null]
+          - name: endpoint
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["/products/search", "/products/{id}", "/products/{id}/items"]
+
+  - name: ops
+    description: Estado operativo del pipeline.
+    schema: ops
+    tables:
+      - name: tracked_products
+        description: Productos que el pipeline sigue hoy, según el último descubrimiento.

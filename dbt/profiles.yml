@@ -1,0 +1,17 @@
+# Sin credenciales en el repo: todo sale de variables de entorno.
+# `python -m transform` las arma a partir de DATABASE_URL (el mismo .env que usa el extractor).
+meli:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('PGHOST') }}"
+      port: "{{ env_var('PGPORT', '5432') | as_number }}"
+      user: "{{ env_var('PGUSER') }}"
+      # El prefijo DBT_ENV_SECRET_ hace que dbt oculte el valor en los logs
+      password: "{{ env_var('DBT_ENV_SECRET_PGPASSWORD') }}"
+      dbname: "{{ env_var('PGDATABASE') }}"
+      schema: silver
+      sslmode: "{{ env_var('PGSSLMODE', 'require') }}"
+      connect_timeout: 15
+      threads: 4

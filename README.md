@@ -4,7 +4,7 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** Fases 0 a 2 completadas: el extractor carga bronze en PostgreSQL (Neon) · Fase 3 (dbt) próxima
+> **Estado:** Fases 0 a 3 completadas: extracción a bronze en PostgreSQL (Neon) y modelos silver/gold con dbt · Fase 4 (orquestación) próxima
 
 ---
 
@@ -45,7 +45,7 @@ El producto de catálogo es una entidad estable (por ejemplo, "iPhone 15 128 GB 
 | Capa | Contenido | Tablas principales |
 |---|---|---|
 | **Bronze** | Respuestas de la API tal cual llegan, en `jsonb` | `api_responses` |
-| **Silver** | Datos tipados y deduplicados, con historial SCD2 | `stg_products`, `stg_listing_prices`, `snap_listing_prices` |
+| **Silver** | Datos tipados y deduplicados, con historial SCD2 | `stg_products`, `stg_listing_prices`, `scd_listing_prices` |
 | **Gold** | Modelo estrella listo para consumir | `dim_product`, `dim_seller`, `fct_listing_daily`, `fct_product_daily`, `mart_weekly_movers` |
 
 El schema `ops` queda fuera de las capas: guarda el estado operativo del pipeline (tokens y registro de corridas), no datos de negocio.
@@ -91,10 +91,11 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | **Filtro por regex sobre modelo y nombre** | La búsqueda del catálogo es aproximada y el atributo `MODEL` lo cargan los vendedores sin formato fijo (el mismo Galaxy S24 aparece como "S24", "Galaxy S24" o "S24 (eSIM)"). Un valor exacto pierde productos; las regex `include`/`exclude` de la watchlist los capturan y descartan variantes (FE, Ultra, Plus) antes de gastar llamadas en ellas. |
 | **Descubrimiento semanal** | La lista de productos se guarda y se refresca cada 7 días o cuando cambia la watchlist. Los precios ya consultados al validar productos se reusan, sin repetir llamadas. |
 | **ELT con capa bronze** | La respuesta JSON se guarda sin tocar. Si cambia la lógica, se reprocesa sin volver a consultar la API. |
-| **Cargas idempotentes** | Correr dos veces el mismo día no duplica datos (delete + insert por `snapshot_date`). |
+| **Silver incremental e idempotente** | `stg_listing_prices` reprocesa los últimos 3 días y reemplaza cada producto-día completo (`delete+insert`). Correr dbt dos veces da el mismo resultado. |
 | **Refresh token persistido en la base** | MercadoLibre rota el refresh token en cada uso; un secret estático de GitHub no alcanza. |
 | **Permisos mínimos** | La app solo tiene acceso de lectura: un token filtrado no permite modificar nada en la cuenta. |
-| **dbt snapshot para SCD2** | Estrategia `check` sobre precio, precio original, envío y tipo de publicación. |
+| **dbt sobre Postgres, no Spark ni pandas** | Los datos ya están en la base: dbt transforma ahí mismo, sin moverlos, y suma orden automático entre modelos, tests de datos y documentación. Con miles de filas por día, Spark agregaría complejidad sin beneficio; queda para la migración a Databricks del roadmap. |
+| **SCD2 como modelo, no como `dbt snapshot`** | Bronze guarda la historia completa, así que el historial se reconstruye entero desde ahí con un *gaps and islands*: una versión nueva cuando cambia el precio, el precio original, el envío o el tipo de publicación, o cuando la publicación reaparece después de faltar. Un snapshot es estado acumulado que no se puede regenerar; este modelo es determinista y se testea con tests singulares (sin superposiciones, una versión vigente, cobertura de cada precio diario). |
 | **Registro de corridas en `ops.pipeline_runs`** | La fila se inserta al empezar (`running`) y se actualiza al terminar: una corrida que se cae a la mitad también queda visible. Guarda duración, productos, errores y respuestas 429. |
 | **Renovación del token bajo lock** | El refresh se hace con un advisory lock de Postgres. Si dos corridas renuevan a la vez, la segunda espera y reusa el token nuevo en lugar de invalidarlo. |
 | **Bronze solo agrega filas** | Nunca se modifica ni se borra: si el pipeline corre dos veces el mismo día, silver se queda con la última corrida de cada día. |
@@ -114,7 +115,7 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | `bronze` | `api_responses` | request | JSON crudo + `run_id`, `endpoint`, `product_id`, `fetched_at` |
 | `silver` | `stg_products` | producto | Nombre, dominio y atributos del catálogo |
 | `silver` | `stg_listing_prices` | publicación × día | Precio, precio original, condición, tipo de publicación, envío, vendedor |
-| `silver` | `snap_listing_prices` | publicación × versión | SCD2 con `dbt_valid_from` / `dbt_valid_to` |
+| `silver` | `scd_listing_prices` | publicación × versión | SCD2 con `valid_from` / `valid_to` (exclusivo) e `is_current` |
 | `gold` | `dim_product` | producto | Atributos descriptivos |
 | `gold` | `dim_seller` | vendedor | Provincia, tienda oficial |
 | `gold` | `fct_listing_daily` | publicación × día | Precio y condiciones de venta |
@@ -124,7 +125,7 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | `ops` | `tracked_products` | producto | Productos seguidos, resultado del último descubrimiento |
 | `ops` | `pipeline_runs` | corrida | Métricas y estado de cada ejecución |
 
-En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `models/marts`) y cada carpeta escribe en su schema desde `dbt_project.yml`.
+En dbt se mantiene la convención de carpetas (`models/staging` → `silver`, `models/marts` → `gold`); una macro hace que cada carpeta escriba exactamente en su schema.
 
 ---
 
@@ -152,10 +153,12 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 - [x] Renovación del token protegida contra corridas simultáneas
 - [x] Tests unitarios de los stores y tests de integración contra Postgres (opcionales, con `TEST_DATABASE_URL`)
 
-### Fase 3: Transformación con dbt (2–3 días)
-- [ ] Silver: `stg_products`, `stg_listing_prices` (idempotente) y `snap_listing_prices` (SCD2)
-- [ ] Gold: dimensiones, `fct_listing_daily`, `fct_product_daily`, `mart_weekly_movers`
-- [ ] Tests dbt: `unique`, `not_null`, relaciones, rangos de precio, frescura
+### Fase 3: Transformación con dbt ✅
+- [x] Silver: `stg_products` (atributos del catálogo), `stg_listing_prices` (incremental e idempotente) y `scd_listing_prices` (SCD2 reconstruible desde bronze)
+- [x] Gold: `dim_product`, `dim_seller`, `fct_listing_daily`, `fct_product_daily`, `mart_weekly_movers`
+- [x] Tests de datos: `unique`, `not_null`, relaciones, valores aceptados, precios positivos y frescura de bronze
+- [x] Tests singulares del SCD2: sin versiones superpuestas, una sola versión vigente, cada precio diario cubierto por una versión
+- [x] `python -m transform`: corre dbt con la misma `DATABASE_URL` que el extractor
 
 ### Fase 4: Orquestación (1 día)
 - [ ] `daily.yml`: extracción + `dbt build` con cron diario
@@ -192,10 +195,12 @@ En dbt se mantiene la convención de carpetas (`models/staging`, `snapshots`, `m
 │   │   └── postgres.py  # bronze en Postgres
 │   └── main.py          # punto de entrada: python -m extract
 ├── db/migrations/       # SQL versionado
+├── transform/           # python -m transform: corre dbt con DATABASE_URL
 ├── dbt/
-│   ├── models/staging/  # → silver
-│   ├── snapshots/       # → silver (SCD2)
-│   └── models/marts/    # → gold
+│   ├── models/staging/  # → silver (incluye el SCD2)
+│   ├── models/marts/    # → gold
+│   ├── macros/          # schemas, atributos del catálogo, tests genéricos
+│   └── tests/           # tests singulares del SCD2
 ├── app/                 # dashboard Streamlit
 ├── tests/
 ├── scripts/             # utilidades de la Fase 0
@@ -218,6 +223,7 @@ cp .env.example .env                                 # completar con la app del 
 python -m extract db-init            # crea las tablas en Postgres (si hay un token local, lo importa)
 python -m extract bootstrap          # autorización inicial, una sola vez
 python -m extract run                # descubrimiento (si toca) y precios del día
+python -m transform build            # modelos silver y gold de dbt, con sus tests
 python -m unittest discover -s tests -t .   # tests
 ```
 
