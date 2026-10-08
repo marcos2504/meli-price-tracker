@@ -1,5 +1,6 @@
 # Credenciales: nunca al repo
 .env
+.streamlit/secrets.toml
 .tokens.json*
 
 # Python

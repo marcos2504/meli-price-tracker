@@ -86,9 +86,25 @@ def main() -> None:
         )
 
         check(
+            "display_name limpia el nombre del catálogo",
+            q("select display_name from gold.dim_product where product_id = 'MLAP2'"),
+            [("Samsung Galaxy S24, Negro Onyx, 8 GB 256 GB",)],
+        )
+
+        check(
             "dim_product toma los atributos del catálogo",
             q("select brand, model, search from gold.dim_product where product_id = 'MLAP2'"),
             [("Samsung", "S24", "samsung-galaxy-s24")],
+        )
+
+        # Solo I1 cambió de precio; la desaparición de I2 y la aparición de I3 no son cambios
+        check(
+            "fct_price_changes (fecha, publicación, anterior, nuevo, %)",
+            q(
+                "select change_date, item_id, previous_price, new_price, change_pct"
+                " from gold.fct_price_changes"
+            ),
+            [(D2, "MLAI1", Decimal("1000.00"), Decimal("950.00"), Decimal("-5.00"))],
         )
 
     if failures:

@@ -213,12 +213,19 @@ class PostgresRunLogTests(unittest.TestCase):
     def test_inserta_al_empezar_y_actualiza_al_terminar(self):
         conn = FakeConn()
         runs = PostgresRunLog(conn)
-        summary = {"run_id": "r1", "started_at": "2026-10-05T12:00:00+00:00", "status": "running"}
+        summary = {
+            "run_id": "r1",
+            "started_at": "2026-10-05T12:00:00+00:00",
+            "triggered_by": "schedule",
+            "status": "running",
+        }
         runs.start(summary)
         summary |= {"status": "failed", "error": "ApiError: 500", "http": {"requests": 3}}
         runs.finish(summary)
 
-        self.assertEqual(conn.sql("insert into ops.pipeline_runs")[0][1], ("r1", summary["started_at"]))
+        self.assertEqual(
+            conn.sql("insert into ops.pipeline_runs")[0][1], ("r1", summary["started_at"], "schedule")
+        )
         params = conn.sql("update ops.pipeline_runs")[0][1]
         self.assertEqual(params[2], "failed")
         self.assertEqual(json.loads(params[8]), {"requests": 3})

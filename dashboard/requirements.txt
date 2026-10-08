@@ -1,0 +1,6 @@
+# Dependencias del dashboard. Separadas de las del pipeline: Streamlit Community Cloud
+# busca primero un requirements.txt en la carpeta del archivo principal (dashboard/).
+streamlit>=1.50,<2
+psycopg[binary]>=3.2
+pandas>=2.2
+altair>=5

@@ -1,0 +1,24 @@
+# Tema del dashboard. Streamlit lee este archivo desde el directorio donde se corre
+# `streamlit run`, que es la raíz del repo (local y en Community Cloud).
+#
+# El color principal no puede ser rojo ni verde: en los gráficos, verde es baja de precio y
+# rojo es suba. Un índigo neutro deja esos dos colores solo para el significado.
+
+[theme]
+base = "light"
+primaryColor = "#4F46E5"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F6FA"
+textColor = "#1F2430"
+borderColor = "#E3E5EC"
+showWidgetBorder = true
+greenColor = "#16A34A"
+redColor = "#DC2626"
+font = "sans-serif"
+chartCategoricalColors = ["#4F46E5", "#16A34A", "#DC2626", "#9CA3AF", "#F59E0B"]
+
+[client]
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false

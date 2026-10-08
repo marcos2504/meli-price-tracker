@@ -6,6 +6,9 @@ models:
     columns:
       - name: product_id
         data_tests: [unique, not_null]
+      - name: display_name
+        description: Nombre para mostrar, con el formato corregido (ver macro clean_product_name).
+        data_tests: [not_null]
 
   - name: dim_seller
     description: Vendedor, con su ubicación más reciente y si es tienda oficial.
@@ -60,3 +63,21 @@ models:
         data_tests: [unique, not_null]
       - name: change_pct
         data_tests: [not_null]
+
+  - name: fct_price_changes
+    description: >
+      Una fila por cada cambio de precio de una publicación, con el precio anterior, el nuevo y la
+      variación. Sale del SCD2 de silver.
+    columns:
+      - name: price_change_id
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: previous_price
+        data_tests: [not_null, positive_value]
+      - name: new_price
+        data_tests: [not_null, positive_value]

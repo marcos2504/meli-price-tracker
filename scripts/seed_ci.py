@@ -87,7 +87,8 @@ def build_records() -> list[dict]:
     i1, i2, i3, i4 = "MLAI1", "MLAI2", "MLAI3", "MLAI4"
     return [
         detail("MLAP1", "Apple iPhone 15 128 GB Negro", "iPhone 15"),
-        detail("MLAP2", "Samsung Galaxy S24 128 GB Negro", "S24"),
+        # Nombre desprolijo a propósito, como los que publica MercadoLibre: prueba display_name
+        detail("MLAP2", "Samsung Galaxy S24 , Negro Onyx, 8gb_256gb", "S24"),
         record("run-1", "/products/search", "/products/search", None, 200, DAY1, {"results": []}),
         # Día 1
         items("run-1", "MLAP1", 0, [listing(i1, 10, 1000), listing(i2, 11, 1100, original_price=1200)]),
@@ -111,7 +112,7 @@ def main() -> None:
 
     with db.connect(url) as conn:
         db.migrate(conn)
-        conn.execute("truncate bronze.api_responses, ops.tracked_products")
+        conn.execute("truncate bronze.api_responses, ops.tracked_products, ops.pipeline_runs")
         PostgresSink(conn).write_batch(build_records(), "seed")
         PostgresTrackedProducts(conn).save(
             [
@@ -121,6 +122,21 @@ def main() -> None:
                 ),
             ],
             "ci",
+        )
+        # Dos corridas para la página de salud del dashboard. La fallida tiene un mensaje de error:
+        # check_dashboard.py verifica que el usuario de solo lectura no lo puede ver.
+        conn.execute(
+            """
+            insert into ops.pipeline_runs
+                (run_id, started_at, finished_at, duration_s, status, triggered_by,
+                 discovery, products, listings, error)
+            values
+                ('run-1', %(d1)s, %(d1)s + interval '90 seconds', 90, 'success', 'schedule',
+                 true, 2, 3, null),
+                ('run-2', %(d2)s, %(d2)s + interval '5 seconds', 5, 'failed', 'workflow_dispatch',
+                 false, null, null, 'oculto')
+            """,
+            {"d1": DAY1, "d2": DAY1 + timedelta(days=1)},
         )
     print("Escenario de prueba cargado en bronze")
 
