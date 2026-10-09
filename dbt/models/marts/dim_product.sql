@@ -3,6 +3,7 @@
 select
     p.product_id,
     p.name,
+    {{ clean_product_name('p.name') }} as display_name,
     p.brand,
     p.line,
     p.model,

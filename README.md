@@ -4,7 +4,7 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** Fases 0 a 4 completadas: el pipeline corre solo todos los días en GitHub Actions · Fase 5 (dashboard) próxima
+> **Estado:** Fases 0 a 4 completadas: el pipeline corre solo todos los días en GitHub Actions · Fase 5 (dashboard en Streamlit) en curso
 
 ---
 
@@ -26,7 +26,7 @@ Cubre el caso más común en data engineering: **ingesta robusta de una API exte
 1. **GitHub Actions** dispara el pipeline una vez por día.
 2. El **extractor Python** se autentica con OAuth, consulta la API con reintentos y guarda las respuestas sin modificar.
 3. **dbt** transforma los datos en tres capas dentro de PostgreSQL.
-4. El **dashboard** lee la capa gold.
+4. Un **dashboard en Streamlit** (`dashboard/`) lee el star schema de gold con un usuario de solo lectura.
 
 ### Cómo se obtienen los datos
 
@@ -101,6 +101,8 @@ Gold sigue un modelo dimensional estilo Kimball, con dos tablas de hechos de dis
 | **Bronze solo agrega filas** | Nunca se modifica ni se borra: si el pipeline corre dos veces el mismo día, silver se queda con la última corrida de cada día. |
 | **Fecha de snapshot en hora de Argentina** | Una corrida a las 22 h cuenta para ese día, aunque en UTC ya sea el siguiente. |
 | **CI con resultados esperados, no solo tests de reglas** | Los tests de dbt validan reglas generales (unicidad, nulos, relaciones). El CI además carga un escenario conocido y verifica números concretos del SCD2 y las métricas: si un cambio en el SQL altera los resultados, el PR falla. |
+| **El dashboard lee el star schema, sin tablas extra** | Gold tiene solo dimensiones, hechos y un mart. Los joins de presentación (nombre del producto, datos del vendedor) los hace el dashboard en sus consultas; la lógica que necesita SQL de verdad, como comparar cada versión del SCD2 con la anterior, va en dbt como hecho propio (`fct_price_changes`, un evento por cambio de precio). |
+| **Dashboard como código, con usuario de solo lectura** | Streamlit en el mismo repo: las páginas pasan por PR y el CI las ejecuta contra el escenario de prueba. La app es pública, así que usa un rol que solo lee gold y algunas columnas de `ops.pipeline_runs` (sin errores internos), con transacciones de solo lectura y timeout. Los *default privileges* mantienen el acceso aunque dbt recree las tablas, y el CI lo verifica creando el rol antes de `dbt build`. Las consultas se cachean una hora: los datos cambian una vez por día. |
 | **Migraciones versionadas** | Archivos SQL numerados en `db/migrations/`, aplicados una sola vez y registrados en `ops.schema_migrations`. |
 
 > **Sobre la escala:** el volumen es de miles de filas por día, así que PostgreSQL alcanza de sobra. El diseño por capas y los sinks intercambiables permiten migrar a un lakehouse si el volumen creciera (ver [Roadmap](#roadmap)).
@@ -167,11 +169,15 @@ En dbt se mantiene la convención de carpetas (`models/staging` → `silver`, `m
 - [x] Escenario de prueba en el CI con resultados esperados: cambio de precio, publicación que desaparece, producto sin vendedores y dos corridas el mismo día
 - [x] Si la corrida diaria falla, se abre (o se actualiza) un issue en el repo con el link a la ejecución
 
-### Fase 5: Dashboard (1–2 días)
-- [ ] Ranking de bajas y subas
-- [ ] Evolución de precio y competencia por producto
-- [ ] Panel de salud del pipeline (desde `ops.pipeline_runs`)
-- [ ] Deploy en Streamlit Community Cloud
+### Fase 5: Dashboard en Streamlit
+- [x] `fct_price_changes` en gold: un evento por cada cambio de precio, a partir del SCD2
+- [x] Usuario de solo lectura `dashboard_reader` (`db/manual/dashboard_reader.sql`)
+- [x] Cuatro páginas: bajas y subas de la semana, evolución por producto, cambios de precio y salud del pipeline
+- [x] `display_name` en `dim_product`: limpia los nombres del catálogo ("S24 , Negro, 8gb_256gb" → "S24, Negro, 8 GB 256 GB")
+- [x] Origen de cada corrida (`triggered_by`: programada, manual o local) para distinguir la diaria de las pruebas
+- [x] Tema propio y formato argentino en KPIs, tablas y ejes
+- [x] CI: las consultas corren con el usuario de solo lectura, se verifica que no pueda ver ni escribir lo que no debe y cada página se ejecuta con `AppTest`
+- [ ] Publicado en Streamlit Community Cloud, con el link en este README
 
 ### Fase 6: Documentación (½ día)
 - [ ] Captura del dashboard y link público
@@ -197,15 +203,22 @@ En dbt se mantiene la convención de carpetas (`models/staging` → `silver`, `m
 │   │   └── postgres.py  # bronze en Postgres
 │   └── main.py          # punto de entrada: python -m extract
 ├── db/migrations/       # SQL versionado
+├── db/manual/           # SQL que se corre a mano una vez (usuario del dashboard)
 ├── transform/           # python -m transform: corre dbt con DATABASE_URL
 ├── dbt/
 │   ├── models/staging/  # → silver (incluye el SCD2)
 │   ├── models/marts/    # → gold
 │   ├── macros/          # schemas, atributos del catálogo, tests genéricos
 │   └── tests/           # tests singulares del SCD2
-├── app/                 # dashboard Streamlit
+├── dashboard/           # Streamlit: streamlit run dashboard/app.py
+│   ├── app.py           # navegación entre páginas
+│   ├── queries.py       # SQL contra el star schema de gold
+│   ├── data.py          # conexión de solo lectura y caché
+│   ├── fmt.py           # formato de precios, porcentajes, fechas y ejes
+│   └── views/           # una página por archivo
+├── .streamlit/          # tema del dashboard
 ├── tests/
-├── scripts/             # utilidades de la Fase 0 y escenario de prueba del CI
+├── scripts/             # utilidades de la Fase 0 y verificaciones del CI
 ├── docs/                # diagramas
 ├── watchlist.toml
 └── .github/workflows/
@@ -231,6 +244,19 @@ python -m unittest discover -s tests -t .   # tests
 
 Sin `DATABASE_URL`, el pipeline guarda todo en archivos dentro de `data/`: sirve para probar sin base.
 
+### Dashboard
+
+```bash
+pip install -r dashboard/requirements.txt
+streamlit run dashboard/app.py      # lee DASHBOARD_DATABASE_URL del .env (usuario dashboard_reader)
+```
+
+Para publicarlo en [Streamlit Community Cloud](https://share.streamlit.io): *Create app* → este repo, rama `main`, archivo `dashboard/app.py`, y en *Advanced settings → Secrets*:
+
+```toml
+DASHBOARD_DATABASE_URL = "postgresql://dashboard_reader:...@...-pooler....neon.tech/neondb?sslmode=require"
+```
+
 ### Automatización en GitHub Actions
 
 El workflow `daily.yml` necesita estos secrets en **Settings → Secrets and variables → Actions**:
@@ -247,7 +273,7 @@ Los tokens de MercadoLibre no van como secret: viven en `ops.auth_tokens` y el p
 
 ## Stack
 
-Python · requests · PostgreSQL (Neon) · dbt-core · Streamlit · GitHub Actions
+Python · requests · PostgreSQL (Neon) · dbt-core · GitHub Actions · Streamlit
 
 ---
 

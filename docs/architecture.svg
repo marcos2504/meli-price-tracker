@@ -68,5 +68,5 @@
   <line x1="925" y1="200" x2="971" y2="200" stroke="#555b66" stroke-width="1.4" marker-end="url(#a)"/>
   <rect x="975" y="170" width="140" height="70" rx="8" fill="#e6f4ee" stroke="#2f7d5b" stroke-width="1.2"/>
   <text x="1045" y="198" text-anchor="middle" font-size="15" font-weight="600" fill="#123d2b">Dashboard</text>
-  <text x="1045" y="219" text-anchor="middle" font-size="12" fill="#2f6b50">Streamlit Cloud</text>
+  <text x="1045" y="219" text-anchor="middle" font-size="12" fill="#2f6b50">Streamlit</text>
 </svg>

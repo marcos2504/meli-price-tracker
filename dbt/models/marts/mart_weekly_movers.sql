@@ -70,6 +70,7 @@ compared as (
 select
     compared.product_id,
     p.name,
+    p.display_name,
     p.search,
     compared.base_date,
     compared.as_of_date,

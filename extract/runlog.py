@@ -39,8 +39,9 @@ class PostgresRunLog:
 
     def start(self, summary: dict) -> None:
         self.conn.execute(
-            "insert into ops.pipeline_runs (run_id, started_at, status) values (%s, %s, 'running')",
-            (summary["run_id"], summary["started_at"]),
+            "insert into ops.pipeline_runs (run_id, started_at, triggered_by, status)"
+            " values (%s, %s, %s, 'running')",
+            (summary["run_id"], summary["started_at"], summary.get("triggered_by")),
         )
 
     def finish(self, summary: dict) -> None:

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import uuid
 from collections.abc import Callable
@@ -86,6 +87,8 @@ def run(
         "run_id": run_id,
         "backend": backend.name,
         "started_at": started.isoformat(),
+        # En GitHub Actions: schedule (cron) o workflow_dispatch (manual). Fuera de Actions: local
+        "triggered_by": os.environ.get("GITHUB_EVENT_NAME", "local"),
         "status": "running",
     }
 

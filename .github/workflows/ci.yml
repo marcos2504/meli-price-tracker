@@ -34,6 +34,8 @@ jobs:
       ML_CLIENT_SECRET: ci
       ML_REDIRECT_URI: https://www.google.com
       CI_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?sslmode=disable
+      # El dashboard se prueba con el mismo usuario de solo lectura que usa en producción
+      DASHBOARD_DATABASE_URL: postgresql://dashboard_reader:ci_reader@localhost:5432/ci?sslmode=disable
 
     steps:
       - uses: actions/checkout@v5
@@ -48,8 +50,8 @@ jobs:
 
       - name: Lint (ruff)
         run: |
-          ruff check extract transform tests scripts
-          ruff format --check extract transform tests scripts
+          ruff check extract transform tests scripts dashboard
+          ruff format --check extract transform tests scripts dashboard
 
       - name: Tests unitarios y de integración con Postgres
         env:
@@ -61,6 +63,12 @@ jobs:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
         run: python scripts/seed_ci.py
 
+      # Antes de dbt: así se prueba que los default privileges cubren las tablas que dbt crea
+      - name: Crear el usuario de solo lectura del dashboard
+        run: |
+          sed "s/CAMBIAR_POR_UNA_CLAVE_LARGA/ci_reader/" db/manual/dashboard_reader.sql \
+            | psql "$CI_DATABASE_URL" -v ON_ERROR_STOP=1 -q
+
       - name: dbt build (modelos + tests de datos)
         env:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
@@ -70,3 +78,9 @@ jobs:
         env:
           DATABASE_URL: ${{ env.CI_DATABASE_URL }}
         run: python scripts/check_ci.py
+
+      - name: Instalar dependencias del dashboard
+        run: pip install -r dashboard/requirements.txt
+
+      - name: Verificar el dashboard (consultas, permisos y páginas)
+        run: python scripts/check_dashboard.py
