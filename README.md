@@ -4,9 +4,11 @@ Pipeline de datos que sigue a diario el precio de productos de MercadoLibre, gua
 
 Cubre el caso más común en data engineering: **ingesta robusta de una API externa**, carga incremental, historización de cambios y automatización sin servidor propio.
 
-> **Estado:** el pipeline corre solo todos los días en GitHub Actions · **[Ver el dashboard](URL_DEL_DASHBOARD)**
+> **Estado:** el pipeline corre solo todos los días en GitHub Actions · **[Ver el dashboard](https://meli-price-tracker-8ja8qsydhenw3y267wtgo8.streamlit.app/)**
 
 ![Dashboard: movimientos de la semana](docs/img/dashboard-resumen.png)
+
+![Dashboard: evolución del precio de un producto](docs/img/dashboard-producto.png)
 
 ---
 
@@ -206,10 +208,10 @@ Este es el escenario que carga el CI en cada PR (`scripts/seed_ci.py`); los resu
 - [x] Origen de cada corrida (`triggered_by`: programada, manual o local) para distinguir la diaria de las pruebas
 - [x] Tema propio y formato argentino en KPIs, tablas y ejes
 - [x] CI: las consultas corren con el usuario de solo lectura, se verifica que no pueda ver ni escribir lo que no debe y cada página se ejecuta con `AppTest`
-- [ ] Publicado en Streamlit Community Cloud, con el link en este README
+- [x] Publicado en Streamlit Community Cloud, con el link en este README
 
 ### Fase 6: Documentación y uso
-- [ ] Captura del dashboard y link público
+- [x] Captura del dashboard y link público
 - [x] Ejemplo del SCD2 explicado con el escenario del CI
 - [x] Productos por link (`[[product]]` en la watchlist) y `python -m extract preview` para probar búsquedas
 - [x] [Lecciones aprendidas](#qué-aprendí-y-qué-haría-distinto)
