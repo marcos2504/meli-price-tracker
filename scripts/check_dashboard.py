@@ -19,7 +19,7 @@ sys.path.insert(0, str(DASHBOARD))
 
 import queries as q  # noqa: E402
 
-PAGES = ["views/producto.py", "views/cambios.py", "views/salud.py"]
+PAGES = ["views/resumen.py", "views/producto.py", "views/cambios.py", "views/salud.py"]
 
 failures: list[str] = []
 
@@ -40,6 +40,11 @@ def check_queries(url: str) -> None:
         ("PRODUCT_LISTINGS", q.PRODUCT_LISTINGS, {"product_id": "MLAP1"}, 2),
         ("PRICE_CHANGES", q.PRICE_CHANGES, {"days": 30}, 1),
         ("PIPELINE_RUNS", q.PIPELINE_RUNS, {"limit": 60}, 2),
+        ("PRICE_INDEX", q.PRICE_INDEX, {}, 3),
+        ("DAILY_GRID", q.DAILY_GRID, {"days": 30}, 5),
+        ("MARKET_MIX", q.MARKET_MIX, {}, 1),
+        ("CHANGES_SUMMARY", q.CHANGES_SUMMARY, {"days": 7}, 1),
+        ("SELLERS_BY_STATE", q.SELLERS_BY_STATE, {}, None),
     ]
     with psycopg.connect(url) as conn:
         for name, sql, params, expected in cases:
@@ -70,7 +75,7 @@ def check_pages() -> None:
 
     at = AppTest.from_file(str(DASHBOARD / "app.py"), default_timeout=60)
     at.run()
-    check_page(at, "views/resumen.py (inicio)")
+    check_page(at, "views/panorama.py (inicio)")
     for page in PAGES:
         at.switch_page(page)
         at.run()

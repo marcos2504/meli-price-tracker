@@ -3,7 +3,7 @@ import streamlit as st
 
 import queries as q
 from data import load
-from fmt import GREEN, PCT_AXIS, RED, ars, pct
+from fmt import DROP, PCT_AXIS, RISE, ars, pct
 
 st.title("Movimientos de la semana")
 
@@ -48,7 +48,7 @@ def movers_column(title: str, rows, empty: str) -> None:
             row.display_name,
             ars(row.current_price),
             delta=f"{pct(row.change_pct)} ({ars(row.change_amount)})",
-            delta_color="inverse",  # una baja de precio es buena noticia: verde
+            delta_color="inverse",  # una baja de precio es buena noticia: azul
             border=True,
         )
 
@@ -83,7 +83,7 @@ chart = (
     .encode(
         x=alt.X("change_pct:Q", title=None, axis=PCT_AXIS),
         y=alt.Y("display_name:N", sort="x", title=None, axis=alt.Axis(labelLimit=360)),
-        color=alt.condition(alt.datum.change_pct < 0, alt.value(GREEN), alt.value(RED)),
+        color=alt.condition(alt.datum.change_pct < 0, alt.value(DROP), alt.value(RISE)),
         tooltip=[
             alt.Tooltip("display_name:N", title="Producto"),
             alt.Tooltip("antes:N", title="Antes"),

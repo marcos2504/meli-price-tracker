@@ -4,7 +4,7 @@ import streamlit as st
 
 import queries as q
 from data import load
-from fmt import COUNT_AXIS, GREEN, LINK_COLUMN, RED, ars, day, day_axis, listing_url, pct, with_day
+from fmt import COUNT_AXIS, DROP, LINK_COLUMN, RISE, ars, day, day_axis, listing_url, pct, with_day
 
 st.title("Cambios de precio")
 st.markdown(
@@ -47,7 +47,7 @@ chart = (
         color=alt.Color(
             "tipo:N",
             title=None,
-            scale=alt.Scale(domain=["Baja", "Suba"], range=[GREEN, RED]),
+            scale=alt.Scale(domain=["Baja", "Suba"], range=[DROP, RISE]),
             legend=alt.Legend(orient="top"),
         ),
         tooltip=[

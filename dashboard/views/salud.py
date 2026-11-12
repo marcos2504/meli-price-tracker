@@ -4,7 +4,7 @@ import streamlit as st
 
 import queries as q
 from data import load
-from fmt import COUNT_AXIS, GRAY, GREEN, RED, STATUS, TRIGGER, day_axis, with_day
+from fmt import COUNT_AXIS, CRITICAL, GOOD, GRAY, STATUS, TRIGGER, day_axis, with_day
 
 TZ = "America/Argentina/Buenos_Aires"
 
@@ -68,7 +68,7 @@ chart = (
         color=alt.Color(
             "estado:N",
             title=None,
-            scale=alt.Scale(domain=list(STATUS.values()), range=[GREEN, RED, GRAY]),
+            scale=alt.Scale(domain=list(STATUS.values()), range=[GOOD, CRITICAL, GRAY]),
             legend=alt.Legend(orient="top"),
         ),
         tooltip=[
