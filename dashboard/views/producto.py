@@ -5,9 +5,9 @@ import streamlit as st
 import queries as q
 from data import load
 from fmt import (
-    ACCENT,
     CONDITION,
-    GREEN,
+    DROP,
+    GRAY,
     LINK_COLUMN,
     MONEY_AXIS,
     ars,
@@ -88,7 +88,8 @@ chart = (
             "serie:N",
             title=None,
             sort=["Más barato", "Mediana"],
-            scale=alt.Scale(domain=["Más barato", "Mediana"], range=[GREEN, ACCENT]),
+            # Se resalta el más barato y la mediana queda de contexto en gris
+            scale=alt.Scale(domain=["Más barato", "Mediana"], range=[DROP, GRAY]),
             legend=alt.Legend(orient="top"),
         ),
         tooltip=[

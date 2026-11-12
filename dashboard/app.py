@@ -15,12 +15,14 @@ st.html(
     <style>
       [data-testid="stMainBlockContainer"] { padding-top: 2.5rem; max-width: 1200px; }
       [data-testid="stMetricValue"] { font-size: 1.9rem; }
+      .st-key-hero [data-testid="stMetricValue"] { font-size: 3.4rem; line-height: 1.1; }
     </style>
     """
 )
 
 pages = [
-    st.Page("views/resumen.py", title="Resumen", icon=":material/trending_down:", default=True),
+    st.Page("views/panorama.py", title="Panorama", icon=":material/dashboard:", default=True),
+    st.Page("views/resumen.py", title="Movimientos", icon=":material/trending_down:", url_path="resumen"),
     st.Page("views/producto.py", title="Por producto", icon=":material/show_chart:", url_path="producto"),
     st.Page("views/cambios.py", title="Cambios de precio", icon=":material/swap_vert:", url_path="cambios"),
     st.Page("views/salud.py", title="Salud del pipeline", icon=":material/monitor_heart:", url_path="salud"),

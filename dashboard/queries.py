@@ -122,3 +122,80 @@ from ops.pipeline_runs
 order by started_at desc
 limit %(limit)s
 """
+
+# Índice de precios: cada producto arranca en 100 el primer día que se lo siguió (su precio más
+# barato de ese día es la base) y el índice del día es el promedio entre los productos con datos.
+# Así un producto caro no pesa más que uno barato.
+PRICE_INDEX = """
+with base as (
+    select distinct on (product_id)
+        product_id,
+        min_price as base_price
+    from gold.fct_product_daily
+    order by product_id, snapshot_date
+)
+select
+    f.snapshot_date,
+    round(avg(100.0 * f.min_price / b.base_price), 2) as price_index,
+    count(*)                                          as products
+from gold.fct_product_daily as f
+join base as b
+    on b.product_id = f.product_id
+group by f.snapshot_date
+order by f.snapshot_date
+"""
+
+# Precio más barato de cada producto por día en los últimos N días, contados desde el último día
+# con datos. Alimenta el mapa de calor y las tarjetas por producto del Panorama.
+DAILY_GRID = """
+select
+    f.snapshot_date,
+    f.product_id,
+    p.display_name,
+    coalesce(p.search, 'otros') as search,
+    f.min_price,
+    f.min_price_change_pct
+from gold.fct_product_daily as f
+join gold.dim_product as p
+    on p.product_id = f.product_id
+where f.snapshot_date > (select max(snapshot_date) from gold.fct_product_daily) - %(days)s::int
+order by search, p.display_name, f.snapshot_date
+"""
+
+# Cómo se vende en el último día con datos: qué parte de las publicaciones tiene envío gratis,
+# Full, tienda oficial o descuento. avg_discount promedia solo las que tienen descuento.
+MARKET_MIX = """
+select
+    count(*)                                                       as listings,
+    avg(case when f.free_shipping then 1.0 else 0.0 end)           as free_shipping_share,
+    avg(case when f.is_full then 1.0 else 0.0 end)                 as full_share,
+    avg(case when s.is_official_store then 1.0 else 0.0 end)       as official_share,
+    avg(case when f.discount_pct > 0 then 1.0 else 0.0 end)        as discounted_share,
+    avg(f.discount_pct) filter (where f.discount_pct > 0)          as avg_discount
+from gold.fct_listing_daily as f
+left join gold.dim_seller as s
+    on s.seller_id = f.seller_id
+where f.snapshot_date = (select max(snapshot_date) from gold.fct_listing_daily)
+"""
+
+# Bajas y subas de precio de las publicaciones en los últimos N días (misma ventana que DAILY_GRID)
+CHANGES_SUMMARY = """
+select
+    count(*) filter (where change_pct < 0) as drops,
+    count(*) filter (where change_pct > 0) as rises
+from gold.fct_price_changes
+where change_date > (select max(snapshot_date) from gold.fct_product_daily) - %(days)s::int
+"""
+
+# Vendedores con publicaciones en el último día, por provincia
+SELLERS_BY_STATE = """
+select
+    coalesce(s.seller_state, 'Sin dato') as state,
+    count(distinct f.seller_id)          as sellers
+from gold.fct_listing_daily as f
+left join gold.dim_seller as s
+    on s.seller_id = f.seller_id
+where f.snapshot_date = (select max(snapshot_date) from gold.fct_listing_daily)
+group by 1
+order by 2 desc, 1
+"""

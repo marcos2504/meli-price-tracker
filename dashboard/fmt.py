@@ -9,7 +9,15 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-GREEN, RED, GRAY, ACCENT = "#16A34A", "#DC2626", "#9CA3AF", "#4F46E5"
+GRAY, ACCENT = "#9CA3AF", "#4F46E5"
+
+# Baja y suba de precio. No son verde y rojo: ese par se confunde con deuteranopía (el verde #16A34A
+# y el rojo #DC2626 quedaban a ΔE 5,0, y hacen falta al menos 8). Azul y rojo quedan a ΔE 21,6.
+DROP, RISE = "#2A78D6", "#E34948"
+MID = "#F0EFEC"  # punto medio de la escala divergente: sin cambio
+
+# Colores de estado: solo para el éxito o la falla de las corridas, nunca para precios
+GOOD, CRITICAL = "#0CA30C", "#D03B3B"
 
 CONDITION = {"new": "Nuevo", "used": "Usado", "refurbished": "Reacondicionado"}
 STATUS = {"success": "Exitosa", "failed": "Fallida", "running": "En curso"}
@@ -38,7 +46,8 @@ def day(value) -> str:
 
 
 def delta_color(value: float | None) -> str:
-    """Para st.metric con precios: bajar es bueno (verde), subir es malo (rojo), 0 es neutro."""
+    """Para st.metric con precios: bajar es bueno (azul), subir es malo (rojo), 0 es neutro.
+    Los colores salen de greenColor y redColor en .streamlit/config.toml."""
     if value is None or pd.isna(value) or round(value, 1) == 0:
         return "off"
     return "inverse"
