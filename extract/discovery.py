@@ -1,11 +1,14 @@
 """
-Descubrimiento de productos a seguir.
+Descubrimiento de productos a seguir. `watchlist.toml` admite dos tipos de entrada:
 
-Cada entrada de `watchlist.toml` es una búsqueda en el catálogo filtrada por dominio y,
-opcionalmente, por expresiones regulares sobre el modelo y el nombre del producto.
-De los resultados se quedan los productos que hoy tienen vendedores activos, hasta
-`max_products` por búsqueda. La lista resultante se guarda en `tracked_products.json`
-y se refresca cuando tiene más de N días o cuando cambia la watchlist.
+- `[[product]]`: un producto puntual, con el link de MercadoLibre o su ID. Se sigue siempre,
+  tenga o no vendedores ese día. Es la forma más simple de agregar algo.
+- `[[search]]`: una búsqueda en el catálogo filtrada por dominio y, opcionalmente, por
+  expresiones regulares sobre el modelo y el nombre. De los resultados se quedan los productos
+  que hoy tienen vendedores activos, hasta `max_products` por búsqueda.
+
+La lista resultante se guarda (ops.tracked_products o tracked_products.json) y se refresca
+cuando tiene más de N días o cuando cambia la watchlist.
 
 Por qué regex y no el atributo MODEL exacto: en muchas marcas el atributo lo cargan los
 vendedores sin formato fijo (el mismo Galaxy S24 aparece como "S24", "S24 (eSIM)",
@@ -19,7 +22,7 @@ import json
 import logging
 import re
 import tomllib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -55,7 +58,7 @@ def match_text(product: dict) -> str:
     return " ".join(filter(None, [attrs.get("MODEL"), product.get("name")]))
 
 
-def _compile(raw: dict, key: str) -> re.Pattern | None:
+def compile_filter(raw: dict, key: str) -> re.Pattern | None:
     pattern = raw.get(key)
     if not pattern:
         return None
@@ -63,6 +66,40 @@ def _compile(raw: dict, key: str) -> re.Pattern | None:
         return re.compile(pattern, re.IGNORECASE)
     except re.error as exc:
         raise ValueError(f"Regex inválida en '{raw.get('name')}'.{key}: {pattern!r} ({exc})") from exc
+
+
+@dataclass(frozen=True)
+class PinnedProduct:
+    """Producto agregado a mano en [[product]]. group es el nombre con el que aparece en el dashboard."""
+
+    product_id: str
+    group: str
+
+
+DEFAULT_GROUP = "favoritos"
+
+# Productos de catálogo: el ID va después de /p/ (…/apple-iphone-15/p/MLA1027172677)
+_CATALOG_URL = re.compile(r"/p/([A-Z]{3}\d+)")
+_PRODUCT_ID = re.compile(r"^[A-Z]{3}\d+$")
+# Publicaciones sueltas: articulo.mercadolibre.com.ar/MLA-123… (no son productos de catálogo)
+_LISTING_URL = re.compile(r"articulo\.mercadolibre|(^|/)[A-Z]{3}-\d+")
+
+
+def parse_product_ref(value: str) -> str:
+    """Devuelve el ID de producto de catálogo a partir de un link de MercadoLibre o del ID."""
+    value = value.strip()
+    if _PRODUCT_ID.match(value.upper()):
+        return value.upper()
+    match = _CATALOG_URL.search(value)
+    if match:
+        return match.group(1)
+    if _LISTING_URL.search(value):
+        raise ValueError(
+            f"{value!r} es el link de una publicación, no de un producto de catálogo. "
+            "Abrí el producto en MercadoLibre y copiá el link que tiene /p/MLA… "
+            "(aparece al entrar desde la búsqueda o en 'Ver más opciones de compra')."
+        )
+    raise ValueError(f"No reconozco {value!r}: pegá el link del producto (con /p/MLA…) o su ID")
 
 
 @dataclass
@@ -78,10 +115,26 @@ class DiscoveryResult:
     products: list[TrackedProduct]
     responses: list[tuple[str, str | None, ApiResponse]]  # (endpoint, product_id, respuesta) para bronze
     items_by_product: dict[str, ApiResponse]  # precios ya obtenidos al validar, para no repetir llamadas
+    rejected: dict[str, list[str]] = field(default_factory=dict)  # búsqueda -> nombres descartados
+
+
+def _read(path: Path) -> dict:
+    return tomllib.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def load_pinned(path: Path) -> list[PinnedProduct]:
+    """Productos de las entradas [[product]], con `url` (link de MercadoLibre) o `id`."""
+    pinned = []
+    for i, raw in enumerate(_read(path).get("product", []), start=1):
+        ref = raw.get("url") or raw.get("id")
+        if not ref:
+            raise ValueError(f"La entrada [[product]] número {i} no tiene url ni id")
+        pinned.append(PinnedProduct(parse_product_ref(ref), raw.get("group", DEFAULT_GROUP)))
+    return pinned
 
 
 def load_watchlist(path: Path) -> list[WatchlistEntry]:
-    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    data = _read(path)
     entries = []
     for raw in data.get("search", []):
         entries.append(
@@ -90,22 +143,48 @@ def load_watchlist(path: Path) -> list[WatchlistEntry]:
                 query=raw["query"],
                 domain_id=raw.get("domain_id"),
                 max_products=int(raw.get("max_products", 10)),
-                include=_compile(raw, "include"),
-                exclude=_compile(raw, "exclude"),
+                include=compile_filter(raw, "include"),
+                exclude=compile_filter(raw, "exclude"),
             )
         )
-    if not entries:
-        raise ValueError(f"La watchlist {path} no tiene búsquedas ([[search]])")
+    if not entries and not data.get("product"):
+        raise ValueError(f"La watchlist {path} está vacía: no tiene [[product]] ni [[search]]")
     return entries
 
 
-def discover(client: MeliClient, entries: list[WatchlistEntry], site_id: str = "MLA") -> DiscoveryResult:
+def discover(
+    client: MeliClient,
+    entries: list[WatchlistEntry],
+    site_id: str = "MLA",
+    pinned: list[PinnedProduct] = (),
+) -> DiscoveryResult:
     result = DiscoveryResult(products=[], responses=[], items_by_product={})
     seen: set[str] = set()
 
+    # Primero los productos puestos a mano: se siguen aunque hoy no tengan vendedores
+    for item in pinned:
+        if item.product_id in seen:
+            continue
+        seen.add(item.product_id)
+        detail = client.get(f"/products/{item.product_id}")
+        if not detail.ok:
+            log.warning("Producto %s de [[product]]: no existe en el catálogo, se ignora", item.product_id)
+            continue
+        result.responses.append(("/products/{id}", item.product_id, detail))
+        result.products.append(
+            TrackedProduct(
+                product_id=item.product_id,
+                name=detail.data.get("name", ""),
+                domain_id=detail.data.get("domain_id"),
+                search=item.group,
+            )
+        )
+    if pinned:
+        log.info("Productos puestos a mano: %d", len(result.products))
+
     for entry in entries:
         kept = 0
-        filtered = {"n": 0}
+        filtered = {"n": 0, "names": []}
         for candidate in _search_candidates(client, entry, site_id, result, filtered):
             pid = candidate["id"]
             if pid in seen:
@@ -134,6 +213,7 @@ def discover(client: MeliClient, entries: list[WatchlistEntry], site_id: str = "
             if kept >= entry.max_products:
                 break
 
+        result.rejected[entry.name] = filtered["names"]
         log.info(
             "Búsqueda '%s': %d productos con vendedores activos (%d descartados por el filtro)",
             entry.name,
@@ -182,6 +262,7 @@ def _search_candidates(
                 continue
             if not entry.matches(product):
                 filtered["n"] += 1
+                filtered["names"].append(product.get("name", product["id"]))
                 continue
             yield product
             yielded += 1
