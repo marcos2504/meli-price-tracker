@@ -4,6 +4,7 @@ Punto de entrada del extractor.
     python -m extract db-init                 crea las tablas e importa el token local (una sola vez)
     python -m extract bootstrap [--pkce]      autorización OAuth inicial
     python -m extract run [--force-discovery] descubrimiento (si toca) y precios del día
+    python -m extract preview [--query ...]   qué productos encontraría la watchlist, sin guardar nada
 
 Si DATABASE_URL está definida, todo se guarda en Postgres (bronze, tokens, productos seguidos y
 registro de corridas). Si no, en archivos locales dentro de data/.
@@ -28,7 +29,10 @@ from extract.discovery import (
     PostgresTrackedProducts,
     TrackedProductsRegistry,
     TrackedProductsStore,
+    WatchlistEntry,
+    compile_filter,
     discover,
+    load_pinned,
     load_watchlist,
     watchlist_fingerprint,
 )
@@ -105,7 +109,12 @@ def run(
         prefetched = {}
         if force_discovery or registry.needs_refresh(fingerprint, max_age):
             log.info("Refrescando la lista de productos desde la watchlist")
-            found = discover(client, load_watchlist(settings.watchlist_path), settings.site_id)
+            found = discover(
+                client,
+                load_watchlist(settings.watchlist_path),
+                settings.site_id,
+                pinned=load_pinned(settings.watchlist_path),
+            )
             sink.write_batch([to_record(r, run_id, ep, pid) for ep, pid, r in found.responses], run_id)
             registry.save(found.products, fingerprint)
             prefetched = found.items_by_product
@@ -115,7 +124,7 @@ def run(
 
         products = registry.products()
         if not products:
-            raise RuntimeError("La lista de productos está vacía: revisá las búsquedas de watchlist.toml")
+            raise RuntimeError("La lista de productos está vacía: revisá watchlist.toml")
 
         # 2. Precios del día
         prices = fetch_prices(client, [p.product_id for p in products], prefetched)
@@ -170,6 +179,50 @@ def db_init(settings: Settings) -> dict:
     return result
 
 
+def preview(settings: Settings, args) -> None:
+    """Corre el descubrimiento sin guardar nada y muestra qué productos quedarían y cuáles se descartan.
+    Con --query prueba una búsqueda nueva antes de agregarla a watchlist.toml."""
+    if args.query:
+        raw = {"name": "prueba", "include": args.include, "exclude": args.exclude}
+        entries = [
+            WatchlistEntry(
+                "prueba",
+                args.query,
+                args.domain,
+                args.max_products,
+                include=compile_filter(raw, "include"),
+                exclude=compile_filter(raw, "exclude"),
+            )
+        ]
+        pinned = []
+    else:
+        entries, pinned = load_watchlist(settings.watchlist_path), load_pinned(settings.watchlist_path)
+
+    backend = open_backend(settings)
+    try:
+        client = MeliClient(TokenManager(settings, backend.tokens), base_url=settings.api_base)
+        found = discover(client, entries, settings.site_id, pinned=pinned)
+    finally:
+        backend.close()
+
+    groups = list(dict.fromkeys([p.group for p in pinned] + [e.name for e in entries]))
+    for group in groups:
+        products = [p for p in found.products if p.search == group]
+        print(f"\n== {group}: {len(products)} productos")
+        for p in products:
+            items = found.items_by_product.get(p.product_id)
+            sellers = ((items.data or {}).get("paging") or {}).get("total", "?") if items else "-"
+            print(f"  {p.product_id:<15} {str(sellers):>4} vend.  {p.domain_id or '':<22} {p.name}")
+        rejected = found.rejected.get(group, [])
+        if rejected:
+            print(f"  -- descartados por include/exclude ({len(rejected)}):")
+            for name in rejected[:15]:
+                print(f"     {name}")
+            if len(rejected) > 15:
+                print(f"     … y {len(rejected) - 15} más")
+    print("\nNo se guardó nada. Si la lista te sirve, agregá la búsqueda a watchlist.toml.")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m extract", description="Extractor de precios de MercadoLibre"
@@ -185,6 +238,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_run = sub.add_parser("run", help="Descubrimiento (si toca) y precios del día")
     p_run.add_argument("--force-discovery", action="store_true", help="Refrescar la lista de productos ahora")
+
+    p_prev = sub.add_parser("preview", help="Ver qué productos encontraría la watchlist, sin guardar nada")
+    p_prev.add_argument("--query", help="Probar una búsqueda nueva en lugar de la watchlist")
+    p_prev.add_argument("--domain", help="domain_id de la búsqueda de prueba, ej. MLA-CELLPHONES")
+    p_prev.add_argument("--include", help="Regex que tienen que cumplir el modelo o el nombre")
+    p_prev.add_argument("--exclude", help="Regex que descarta productos")
+    p_prev.add_argument("--max-products", type=int, default=10)
 
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -217,6 +277,10 @@ def _dispatch(args) -> int:
         finally:
             backend.close()
         print(f"\nOK - tokens guardados en {backend.name}. Vencen: {tokens.expires_at.isoformat()}")
+        return 0
+
+    if args.command == "preview":
+        preview(settings, args)
         return 0
 
     summary = run(force_discovery=args.force_discovery, settings=settings)

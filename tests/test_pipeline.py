@@ -11,11 +11,14 @@ from unittest import mock
 from extract.auth import FileTokenStore, TokenManager
 from extract.client import MeliClient
 from extract.discovery import (
+    PinnedProduct,
     TrackedProduct,
     TrackedProductsRegistry,
     WatchlistEntry,
     discover,
+    load_pinned,
     load_watchlist,
+    parse_product_ref,
 )
 from extract.main import run
 from extract.prices import fetch_prices
@@ -48,7 +51,9 @@ class FakeCatalog:
         search_pages: dict[str, list[list[str]]],
         with_sellers: set[str],
         catalog_info: dict[str, tuple[str, str | None]] | None = None,
+        missing: set[str] = frozenset(),
     ):
+        self.missing = missing  # productos que no existen en el catálogo (404 en /products/{id})
         self.search_pages = search_pages
         self.with_sellers = with_sellers
         self.catalog_info = catalog_info or {}  # product_id -> (nombre, atributo MODEL)
@@ -72,7 +77,7 @@ class FakeCatalog:
         if m:
             return FakeResponse(200, LISTINGS) if m.group(1) in self.with_sellers else FakeResponse(404, {})
         m = re.search(r"/products/(\w+)$", url)
-        if m:
+        if m and m.group(1) not in self.missing:
             return FakeResponse(200, {"id": m.group(1), "name": f"Detalle {m.group(1)}"})
         return FakeResponse(404, {})
 
@@ -128,6 +133,54 @@ exclude = '\\b(fe|ultra)\\b'
             load_watchlist(path)
 
 
+class PinnedProductTests(unittest.TestCase):
+    def test_reconoce_el_link_del_producto_y_el_id(self):
+        url = "https://www.mercadolibre.com.ar/apple-iphone-15-128-gb-negro/p/MLA1027172677#wid=MLA3868215358"
+        self.assertEqual(parse_product_ref(url), "MLA1027172677")  # el de /p/, no el wid de la publicación
+        self.assertEqual(parse_product_ref(" mla1027172677 "), "MLA1027172677")
+
+    def test_link_de_publicacion_da_un_error_que_explica_que_hacer(self):
+        for ref in ("https://articulo.mercadolibre.com.ar/MLA-1234567-iphone-_JM", "MLA-1234567"):
+            with self.assertRaises(ValueError) as ctx:
+                parse_product_ref(ref)
+            self.assertIn("/p/MLA", str(ctx.exception))
+
+    def test_watchlist_solo_con_productos(self):
+        path = Path(tempfile.mkdtemp()) / "watchlist.toml"
+        path.write_text(
+            '[[product]]\nurl = "https://www.mercadolibre.com.ar/x/p/MLA1"\ngroup = "consolas"\n\n'
+            '[[product]]\nid = "MLA2"\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(load_watchlist(path), [])
+        self.assertEqual(
+            load_pinned(path), [PinnedProduct("MLA1", "consolas"), PinnedProduct("MLA2", "favoritos")]
+        )
+
+    def test_producto_sin_url_ni_id_falla(self):
+        path = Path(tempfile.mkdtemp()) / "watchlist.toml"
+        path.write_text('[[product]]\ngroup = "x"\n', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            load_pinned(path)
+
+    def test_los_productos_a_mano_se_siguen_aunque_no_tengan_vendedores(self):
+        catalog = FakeCatalog({"q": [["P1", "P2"]]}, with_sellers={"P1", "P2"}, missing={"NOEXISTE"})
+        client = make_client(catalog, Path(tempfile.mkdtemp()))
+        pinned = [
+            PinnedProduct("SINVEND", "favoritos"),
+            PinnedProduct("NOEXISTE", "x"),
+            PinnedProduct("P1", "y"),
+        ]
+
+        result = discover(client, [WatchlistEntry("q", "q", None, 5)], pinned=pinned)
+
+        self.assertEqual(
+            [(p.product_id, p.search) for p in result.products],
+            [("SINVEND", "favoritos"), ("P1", "y"), ("P2", "q")],  # P1 no se repite en la búsqueda
+        )
+        self.assertEqual(catalog.count(r"/products/SINVEND/items"), 0)  # sus precios los pide fetch_prices
+
+
 class DiscoveryTests(unittest.TestCase):
     def test_se_queda_con_productos_con_vendedores_hasta_el_maximo(self):
         catalog = FakeCatalog({"iphone 15": [["P1", "P2", "P3", "P4"]]}, with_sellers={"P2", "P3", "P4"})
@@ -173,6 +226,7 @@ class DiscoveryTests(unittest.TestCase):
         result = discover(client, [entry])
 
         self.assertEqual([p.product_id for p in result.products], ["A", "D"])
+        self.assertEqual(len(result.rejected["s24"]), 3)  # para que preview muestre qué descartó
         # A los descartados por el filtro no se les piden precios
         self.assertEqual(catalog.count(r"/products/(B|C|E)/items"), 0)
 
